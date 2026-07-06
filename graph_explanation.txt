@@ -1,0 +1,94 @@
+UNDERSTANDING THE TWO TRAINING GRAPHS: train_curve_full.png vs eval_scatter_full.png
+=====================================================================================
+
+These two image files answer different questions about the same model, and they
+are computed in different ways -- which is why numbers that look like they should
+match (e.g. "training error") do not always match exactly between the two files.
+This is expected behavior, not an error.
+
+
+1. WHAT EACH FILE IS
+---------------------
+
+train_curve_full.png
+  Two line charts (MSE and MAE) showing how error changed epoch by epoch across
+  all 40 training epochs. X-axis = epoch number. Shows the TRAJECTORY of training:
+  did the model keep improving, when did it stop improving, did validation ever
+  get worse while training kept improving (a sign of overfitting).
+
+eval_scatter_full.png / eval_scatter_full_train.png
+  Two scatter plots (one for the held-out validation images, one for the
+  training images) made AFTER training finished, by a separate script
+  (evaluate.py). Each dot is one image: true OFIQ score on the x-axis,
+  model's predicted score on the y-axis. Shows the FINAL, one-time snapshot of
+  how accurate the finished model is -- not a trajectory over time.
+
+
+2. THE KEY TECHNICAL REASON THE NUMBERS DIFFER: DROPOUT
+---------------------------------------------------------
+
+The model uses a regularization technique called "dropout." During training,
+dropout randomly switches off a portion of the model's internal neurons for
+every image, on purpose -- this forces the model not to rely too heavily on
+any single feature, which helps it generalize to new images later.
+
+The important detail: dropout is ONLY active during training. It is always
+turned off when the model is being evaluated / used for real predictions.
+
+This matters here because:
+
+  - train_curve_full.png's "train" line is measured DURING the training loop
+    itself, so it is measured WITH dropout switched on. This is a partially
+    handicapped version of the model's performance.
+
+  - eval_scatter_full_train.png's training-set number is measured AFTER
+    training, by evaluate.py, which explicitly switches dropout OFF before
+    scoring anything. This is the model's TRUE, full-strength performance on
+    the same training images.
+
+  - The validation number is measured with dropout OFF in both files, because
+    validation is never handicapped -- so the validation numbers in the two
+    files DO match each other exactly.
+
+Concretely, at the model's best epoch (epoch 37):
+
+  Source                                  Train MAE   Val MAE
+  ---------------------------------------------------------------
+  train_curve_full.png (mid-training)       1.37        1.32
+  eval_scatter_full*.png (post-training)     1.25        1.32
+
+Validation MAE (1.32) is identical in both -- because validation is always
+measured the same way. Training MAE differs (1.37 vs 1.25) purely because of
+whether dropout was on (mid-training measurement) or off (final evaluation).
+
+The 1.25 vs 1.32 comparison (both dropout-off) is the trustworthy, apples-to-
+apples measure of how the model performs on seen vs unseen images. Training is
+slightly better, as expected, but the gap is small (about 0.07 points) --
+which is the actual evidence that the model is not overfitting.
+
+
+3. WHY BOTH GRAPHS ARE STILL WORTH INCLUDING
+-----------------------------------------------
+
+- train_curve_full.png shows the STORY of training: whether the model needed
+  all 40 epochs, whether validation error ever trended upward while training
+  kept improving (which would signal overfitting -- it did not, beyond a very
+  mild uptick in the last few epochs), and which epoch was actually the best
+  one to stop at (epoch 37, chosen by lowest validation MSE).
+
+- eval_scatter_full.png shows the FINAL RESULT: how good the finished model
+  actually is, image by image, on data it never trained on. This is the number
+  that matters for judging real-world usefulness (MAE 1.32, Pearson r 0.863,
+  Spearman rho 0.863 on 7,000 held-out images).
+
+Neither file replaces the other. The curve explains the process; the scatter
+plot reports the outcome.
+
+
+4. ONE-LINE SUMMARY
+---------------------
+
+The two files measure the training set two different ways (dropout on vs
+dropout off), which is why the "training" numbers do not match between them;
+the validation numbers always match between them because validation is never
+handicapped by dropout in either file.
