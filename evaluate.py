@@ -176,8 +176,9 @@ def main():
         print(f"{val_df['Filename'].iloc[i]:<28}{trues[i]:>8.1f}{preds[i]:>8.1f}{preds[i]-trues[i]:>+8.1f}")
 
     # ---- validation scatter --------------------------------------------- #
+    ckpt_epoch = ckpt.get("epoch", "?")
     if args.plot:
-        scatter(trues, preds, m, args.plot, "Validation (held-out)")
+        scatter(trues, preds, m, args.plot, f"Validation (held-out) — checkpoint epoch {ckpt_epoch}")
 
     # ---- training-set scatter (so overfitting is visible) --------------- #
     train_plot = args.train_plot
@@ -194,7 +195,7 @@ def main():
         print(f"  train MAE {tm['mae']:.2f}  vs  val MAE {m['mae']:.2f}   "
               f"(big gap => overfitting)")
         print(f"  train r   {tm['pearson']:.3f}  vs  val r   {m['pearson']:.3f}")
-        scatter(tt, tp, tm, train_plot, "Training set (model has seen these)")
+        scatter(tt, tp, tm, train_plot, f"Training set (model has seen these) — checkpoint epoch {ckpt_epoch}")
 
 
 if __name__ == "__main__":

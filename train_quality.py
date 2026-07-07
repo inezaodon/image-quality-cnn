@@ -355,10 +355,11 @@ def diagnose_overfitting(log_rows, span, requested_epochs=None, patience=None):
 def plot_curves(log_rows, path, requested_epochs=None, patience=None):
     """Plot the TRAINING curves: train vs val MSE and MAE per epoch.
 
-    Best epoch (the dashed vertical line) is chosen by val MSE, not val MAE --
-    MAE is noisy epoch-to-epoch, so a MAE-based marker can land visibly off
-    the true minimum of the MSE curve it's drawn on. Both panels use the same
-    MSE-based best epoch so the two plots agree with each other.
+    The dashed vertical line marks the epoch with the lowest val MSE, shown
+    for reference only -- it is NOT necessarily the epoch saved to disk.
+    The checkpoint written by this script is always the LAST epoch actually
+    run (see the save call after the training loop in main()), so the two
+    can differ when val performance ticks up again after its low point.
     """
     import textwrap
     try:
@@ -377,23 +378,24 @@ def plot_curves(log_rows, path, requested_epochs=None, patience=None):
 
     ax1.plot(df["epoch"], df["train_mse"], "-o", ms=3, label="train MSE")
     ax1.plot(df["epoch"], df["val_mse"], "-o", ms=3, label="val MSE")
-    ax1.axvline(best_epoch, color="grey", ls="--", lw=1, label=f"best val MSE (ep {best_epoch})")
+    ax1.axvline(best_epoch, color="grey", ls="--", lw=1, label=f"lowest val MSE (ep {best_epoch}, reference only)")
     ax1.set_xlabel("epoch"); ax1.set_ylabel("MSE (scaled)"); ax1.set_title("Loss curve (true MSE)")
     ax1.legend(); ax1.grid(alpha=0.3)
 
     ax2.plot(df["epoch"], df["train_mae"], "-o", ms=3, label="train MAE")
     ax2.plot(df["epoch"], df["val_mae"], "-o", ms=3, label="val MAE")
-    ax2.axvline(best_epoch, color="grey", ls="--", lw=1, label=f"best val MSE (ep {best_epoch})")
+    ax2.axvline(best_epoch, color="grey", ls="--", lw=1, label=f"lowest val MSE (ep {best_epoch}, reference only)")
     ax2.set_xlabel("epoch"); ax2.set_ylabel("MAE (score points)"); ax2.set_title("Error curve")
     ax2.legend(); ax2.grid(alpha=0.3)
 
-    title = f"Training curves — best epoch selected by val MSE, not val MAE (epoch {best_epoch})"
+    title = (f"Training curves — checkpoint saved = final epoch ({last_epoch}); "
+             f"dashed line = lowest-val-MSE epoch ({best_epoch}), shown for reference only, not the saved epoch")
     if requested_epochs and last_epoch < requested_epochs:
         title += (f"\nRan {last_epoch}/{requested_epochs} requested epochs — stopped early: "
                   f"no val-MSE improvement for {patience} epochs after epoch {best_epoch}.")
     note = (
-        "Val MAE/MSE can sit below train's because dropout is ON during training (intentionally "
-        "crippling predictions) but OFF during validation — expected, not a labelling error."
+        "Both curves are measured with dropout off and no augmentation, on their respective "
+        "image sets, so they are directly comparable epoch to epoch."
     )
     title += "\n" + "\n".join(textwrap.wrap(note, width=100))
     n_lines = title.count("\n") + 1
@@ -520,11 +522,17 @@ def main():
 
     train_ds = FFHQQualityDataset(train_df, args.root, args.target, train_tf, lo, hi)
     val_ds = FFHQQualityDataset(val_df, args.root, args.target, eval_tf, lo, hi)
+    # Same training images, but no augmentation and (via run_epoch's optimizer=None)
+    # no dropout -- lets the logged train_mse/train_mae be measured the same way as
+    # val, so the per-epoch curves are a fair train-vs-val comparison.
+    train_eval_ds = FFHQQualityDataset(train_df, args.root, args.target, eval_tf, lo, hi)
 
     train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True,
                               num_workers=args.workers, pin_memory=True, drop_last=True)
     val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False,
                             num_workers=args.workers, pin_memory=True)
+    train_eval_loader = DataLoader(train_eval_ds, batch_size=args.batch_size, shuffle=False,
+                                   num_workers=args.workers, pin_memory=True)
 
     # ---- model ------------------------------------------------------------- #
     model = build_model(args.arch, head_drop=head_drop).to(device)
@@ -549,17 +557,24 @@ def main():
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.5, patience=3)
 
     # ---- training loop ----------------------------------------------------- #
-    # Model selection (checkpointing + early stopping) tracks val MSE, not val
-    # MAE: MSE is the smoother of the two metrics epoch-to-epoch, so it's the
-    # more reliable "did this actually get better" signal (MAE alone can flip
-    # the answer by a few epochs just from noise).
+    # Early stopping still tracks val MSE (the smoother of the two metrics
+    # epoch-to-epoch) to decide when to stop -- but the checkpoint saved to
+    # disk is always the LAST epoch actually run, not the best-val-MSE epoch:
+    # simpler, more defensible model selection (Spencer's request).
     best_val_mse = float("inf")
     epochs_since_best = 0
     log_rows = []
     for epoch in range(1, args.epochs + 1):
         t0 = time.time()
-        tr_loss, tr_mse, tr_mae = run_epoch(model, train_loader, criterion, device, span, optimizer,
-                                            grad_clip=args.grad_clip)
+        # dropout on, augmented: this pass is what actually updates the weights.
+        # Its returned metrics are not logged -- they're not comparable to val
+        # (dropout + augmentation both inflate the error), so logging them was
+        # what made the train/val curves look backwards.
+        run_epoch(model, train_loader, criterion, device, span, optimizer,
+                  grad_clip=args.grad_clip)
+        # dropout off, unaugmented: this is what gets logged, so train and val
+        # are measured the same way and are actually comparable epoch to epoch.
+        tr_loss, tr_mse, tr_mae = run_epoch(model, train_eval_loader, criterion, device, span, None)
         va_loss, va_mse, va_mae = run_epoch(model, val_loader, criterion, device, span, None)
         scheduler.step(va_loss)
         dt = time.time() - t0
@@ -577,13 +592,6 @@ def main():
         if va_mse < best_val_mse - 1e-9:
             best_val_mse = va_mse
             epochs_since_best = 0
-            state = model.module.state_dict() if hasattr(model, "module") else model.state_dict()
-            torch.save({"model_state": state, "arch": args.arch, "target": args.target,
-                        "img_size": args.img_size, "val_mse": va_mse, "val_mae": va_mae,
-                        "epoch": epoch, "target_lo": lo, "target_hi": hi, "head_drop": head_drop},
-                       args.out)
-            print(f"  -> saved {args.out} (best val MSE {va_mse:.5f}, val MAE {va_mae:.2f} "
-                  f"in native units)", flush=True)
         else:
             epochs_since_best += 1
             if args.patience and epochs_since_best >= args.patience:
@@ -592,8 +600,16 @@ def main():
                       flush=True)
                 break
 
-    print(f"\nDone. Best val MSE: {best_val_mse:.5f} (native-unit MAE at that epoch is in the log).",
-          flush=True)
+    state = model.module.state_dict() if hasattr(model, "module") else model.state_dict()
+    torch.save({"model_state": state, "arch": args.arch, "target": args.target,
+                "img_size": args.img_size, "val_mse": va_mse, "val_mae": va_mae,
+                "epoch": epoch, "target_lo": lo, "target_hi": hi, "head_drop": head_drop},
+               args.out)
+    print(f"Saved final-epoch checkpoint -> {args.out} (epoch {epoch}, val MSE {va_mse:.5f}, "
+          f"val MAE {va_mae:.2f} in native units)", flush=True)
+
+    print(f"\nDone. Best val MSE seen during training: {best_val_mse:.5f} "
+          f"(native-unit MAE at that epoch is in the log).", flush=True)
 
     # ---- training-set plot + overfitting diagnostics ----------------------- #
     if args.curve:
