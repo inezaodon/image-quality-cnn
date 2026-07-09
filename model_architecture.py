@@ -23,7 +23,10 @@ WHAT ELSE IS IN THE CHECKPOINT (all plain Python values, not model code)
     ckpt["arch"]       -> "resnet_small" (confirms which architecture to use)
     ckpt["target"]      -> "UnifiedQualityScore.native" (the OFIQ column it predicts)
     ckpt["img_size"]    -> 224 (resize input images to this before feeding them in)
-    ckpt["epoch"]       -> 37 (training epoch this checkpoint came from)
+    ckpt["epoch"]       -> 40 (the final epoch trained; the checkpoint is always saved
+                           from the last epoch actually run, not from whichever epoch
+                           had the lowest validation MSE -- see train_quality.py's
+                           training loop for the save call)
     ckpt["val_mse"]/["val_mae"] -> the validation error at that epoch
 
 The model's raw output is a single number in [0, 1] (from the final Sigmoid).
