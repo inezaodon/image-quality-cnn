@@ -1,0 +1,68 @@
+Loading CRC_default/1.1
+Loading CRC_default/1.1
+index, name, memory.total [MiB]
+0, NVIDIA A10, 23028 MiB
+Device: cuda | GPUs visible: 1
+Usable labelled images: 70000
+Train: 63000 | Val: 7000
+Target 'UnifiedQualityScore.native': train range [11.211, 33.278] -> scaled with (lo=10.108, hi=34.381); MAE reported in native units.
+Saved val split -> best_model_full.val_files.txt
+Model: resnet_small | parameters: 0.33M
+Loss: combined | grad_clip: 1.0
+epoch   1/40 | train MSE 0.0154 MAE  2.39 | val MSE 0.0143 MAE  2.31 | combined loss 0.2065/0.1403 | gap -0.08 | lr 1.0e-03 | 103s
+epoch   2/40 | train MSE 0.0102 MAE  1.94 | val MSE 0.0088 MAE  1.81 | combined loss 0.1276/0.0987 | gap -0.13 | lr 1.0e-03 | 75s
+epoch   3/40 | train MSE 0.0087 MAE  1.79 | val MSE 0.0073 MAE  1.64 | combined loss 0.1079/0.0911 | gap -0.15 | lr 1.0e-03 | 75s
+epoch   4/40 | train MSE 0.0079 MAE  1.71 | val MSE 0.0066 MAE  1.55 | combined loss 0.0974/0.0826 | gap -0.15 | lr 1.0e-03 | 75s
+epoch   5/40 | train MSE 0.0074 MAE  1.65 | val MSE 0.0072 MAE  1.64 | combined loss 0.0908/0.0793 | gap -0.02 | lr 1.0e-03 | 80s
+epoch   6/40 | train MSE 0.0070 MAE  1.61 | val MSE 0.0079 MAE  1.73 | combined loss 0.0860/0.0756 | gap +0.11 | lr 1.0e-03 | 75s
+epoch   7/40 | train MSE 0.0068 MAE  1.58 | val MSE 0.0061 MAE  1.49 | combined loss 0.0828/0.0736 | gap -0.09 | lr 1.0e-03 | 105s
+epoch   8/40 | train MSE 0.0066 MAE  1.56 | val MSE 0.0064 MAE  1.53 | combined loss 0.0801/0.0717 | gap -0.03 | lr 1.0e-03 | 76s
+epoch   9/40 | train MSE 0.0065 MAE  1.54 | val MSE 0.0055 MAE  1.43 | combined loss 0.0781/0.0688 | gap -0.12 | lr 1.0e-03 | 76s
+epoch  10/40 | train MSE 0.0063 MAE  1.52 | val MSE 0.0055 MAE  1.42 | combined loss 0.0757/0.0676 | gap -0.10 | lr 1.0e-03 | 76s
+epoch  11/40 | train MSE 0.0062 MAE  1.51 | val MSE 0.0058 MAE  1.45 | combined loss 0.0750/0.0687 | gap -0.06 | lr 1.0e-03 | 77s
+epoch  12/40 | train MSE 0.0061 MAE  1.50 | val MSE 0.0054 MAE  1.40 | combined loss 0.0738/0.0673 | gap -0.10 | lr 1.0e-03 | 76s
+epoch  13/40 | train MSE 0.0060 MAE  1.49 | val MSE 0.0065 MAE  1.55 | combined loss 0.0723/0.0682 | gap +0.06 | lr 1.0e-03 | 79s
+epoch  14/40 | train MSE 0.0060 MAE  1.48 | val MSE 0.0055 MAE  1.42 | combined loss 0.0714/0.0665 | gap -0.07 | lr 1.0e-03 | 81s
+epoch  15/40 | train MSE 0.0059 MAE  1.48 | val MSE 0.0053 MAE  1.38 | combined loss 0.0708/0.0654 | gap -0.09 | lr 1.0e-03 | 79s
+epoch  16/40 | train MSE 0.0058 MAE  1.47 | val MSE 0.0057 MAE  1.46 | combined loss 0.0700/0.0639 | gap -0.01 | lr 1.0e-03 | 84s
+epoch  17/40 | train MSE 0.0057 MAE  1.46 | val MSE 0.0055 MAE  1.42 | combined loss 0.0687/0.0644 | gap -0.04 | lr 1.0e-03 | 79s
+epoch  18/40 | train MSE 0.0057 MAE  1.45 | val MSE 0.0053 MAE  1.40 | combined loss 0.0679/0.0625 | gap -0.04 | lr 1.0e-03 | 81s
+epoch  19/40 | train MSE 0.0056 MAE  1.44 | val MSE 0.0050 MAE  1.35 | combined loss 0.0670/0.0627 | gap -0.09 | lr 1.0e-03 | 99s
+epoch  20/40 | train MSE 0.0056 MAE  1.44 | val MSE 0.0051 MAE  1.36 | combined loss 0.0667/0.0624 | gap -0.08 | lr 1.0e-03 | 105s
+epoch  21/40 | train MSE 0.0055 MAE  1.43 | val MSE 0.0051 MAE  1.37 | combined loss 0.0662/0.0623 | gap -0.06 | lr 1.0e-03 | 97s
+epoch  22/40 | train MSE 0.0055 MAE  1.42 | val MSE 0.0052 MAE  1.38 | combined loss 0.0657/0.0613 | gap -0.04 | lr 1.0e-03 | 97s
+epoch  23/40 | train MSE 0.0055 MAE  1.42 | val MSE 0.0050 MAE  1.36 | combined loss 0.0653/0.0604 | gap -0.07 | lr 1.0e-03 | 92s
+epoch  24/40 | train MSE 0.0054 MAE  1.42 | val MSE 0.0051 MAE  1.38 | combined loss 0.0650/0.0606 | gap -0.03 | lr 1.0e-03 | 80s
+epoch  25/40 | train MSE 0.0054 MAE  1.41 | val MSE 0.0052 MAE  1.38 | combined loss 0.0646/0.0626 | gap -0.03 | lr 1.0e-03 | 76s
+epoch  26/40 | train MSE 0.0054 MAE  1.41 | val MSE 0.0050 MAE  1.36 | combined loss 0.0638/0.0604 | gap -0.05 | lr 1.0e-03 | 75s
+epoch  27/40 | train MSE 0.0054 MAE  1.41 | val MSE 0.0049 MAE  1.34 | combined loss 0.0641/0.0596 | gap -0.07 | lr 1.0e-03 | 75s
+epoch  28/40 | train MSE 0.0053 MAE  1.40 | val MSE 0.0048 MAE  1.33 | combined loss 0.0634/0.0599 | gap -0.07 | lr 1.0e-03 | 75s
+epoch  29/40 | train MSE 0.0053 MAE  1.40 | val MSE 0.0051 MAE  1.37 | combined loss 0.0634/0.0598 | gap -0.03 | lr 1.0e-03 | 75s
+epoch  30/40 | train MSE 0.0053 MAE  1.39 | val MSE 0.0047 MAE  1.32 | combined loss 0.0628/0.0589 | gap -0.07 | lr 1.0e-03 | 75s
+epoch  31/40 | train MSE 0.0053 MAE  1.39 | val MSE 0.0048 MAE  1.32 | combined loss 0.0626/0.0604 | gap -0.07 | lr 1.0e-03 | 76s
+epoch  32/40 | train MSE 0.0052 MAE  1.39 | val MSE 0.0048 MAE  1.33 | combined loss 0.0622/0.0598 | gap -0.06 | lr 1.0e-03 | 76s
+epoch  33/40 | train MSE 0.0052 MAE  1.39 | val MSE 0.0049 MAE  1.34 | combined loss 0.0620/0.0591 | gap -0.05 | lr 1.0e-03 | 76s
+epoch  34/40 | train MSE 0.0052 MAE  1.38 | val MSE 0.0048 MAE  1.32 | combined loss 0.0614/0.0582 | gap -0.06 | lr 1.0e-03 | 76s
+epoch  35/40 | train MSE 0.0052 MAE  1.38 | val MSE 0.0056 MAE  1.44 | combined loss 0.0613/0.0590 | gap +0.06 | lr 1.0e-03 | 82s
+epoch  36/40 | train MSE 0.0052 MAE  1.38 | val MSE 0.0048 MAE  1.33 | combined loss 0.0611/0.0581 | gap -0.05 | lr 1.0e-03 | 80s
+epoch  37/40 | train MSE 0.0051 MAE  1.37 | val MSE 0.0047 MAE  1.31 | combined loss 0.0606/0.0578 | gap -0.06 | lr 1.0e-03 | 79s
+epoch  38/40 | train MSE 0.0051 MAE  1.37 | val MSE 0.0048 MAE  1.34 | combined loss 0.0604/0.0572 | gap -0.04 | lr 1.0e-03 | 79s
+epoch  39/40 | train MSE 0.0051 MAE  1.38 | val MSE 0.0049 MAE  1.34 | combined loss 0.0607/0.0575 | gap -0.03 | lr 1.0e-03 | 78s
+epoch  40/40 | train MSE 0.0050 MAE  1.37 | val MSE 0.0048 MAE  1.33 | combined loss 0.0596/0.0571 | gap -0.03 | lr 1.0e-03 | 81s
+Saved final-epoch checkpoint -> best_model_full.pt (epoch 40, val MSE 0.00478, val MAE 1.33 in native units)
+
+Done. Best val MSE seen during training: 0.00470 (native-unit MAE at that epoch is in the log).
+Training-curve plot saved -> train_curve_full.png
+
+---------------- OVERFITTING DIAGNOSIS ----------------
+  best val MSE      : 0.00470 (val MAE 1.31) at epoch 37/40
+  final train MAE   : 1.37   final val MAE: 1.33
+  generalisation gap: -0.03 score points (val - train MAE)
+  val/train MSE ratio: 0.9x  (1x = no overfit; big = memorising)
+  epochs after best : 3  (training continued with no val gain)
+  >> SIGNS OF OVERFITTING DETECTED:
+     - val loss trended UP after the best epoch -> over-training
+-------------------------------------------------------
+
+FULL retrain finished at: Tue Jul  7 12:37:46 PM EDT 2026
+Loading CRC_default/1.1

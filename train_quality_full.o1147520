@@ -1,0 +1,12 @@
+Loading CRC_default/1.1
+Loading CRC_default/1.1
+index, name, memory.total [MiB]
+0, NVIDIA A10, 23028 MiB
+Device: cuda | GPUs visible: 1
+Usable labelled images: 70000
+Train: 63000 | Val: 7000
+Target 'UnifiedQualityScore.native': train range [11.211, 33.278] -> scaled with (lo=10.108, hi=34.381); MAE reported in native units.
+Saved val split -> best_model_full.val_files.txt
+Model: resnet_small | parameters: 0.33M
+Loss: combined | grad_clip: 1.0
+Loading CRC_default/1.1

@@ -1,0 +1,80 @@
+Loading CRC_default/1.1
+Loading CRC_default/1.1
+index, name, memory.total [MiB]
+0, NVIDIA A10, 23028 MiB
+Device: cuda | GPUs visible: 1
+Usable labelled images: 70000
+Train: 63000 | Val: 7000
+Target 'UnifiedQualityScore.native': train range [11.211, 33.278] -> scaled with (lo=10.108, hi=34.381); MAE reported in native units.
+Saved val split -> best_model_full.val_files.txt
+Model: resnet_small | parameters: 0.33M
+Loss: combined | grad_clip: 1.0
+epoch   1/40 | train MSE 0.2056 MAE  2.37 | val MSE 0.1328 MAE  2.09 | gap -0.29 | lr 1.0e-03 | 141s
+  -> saved best_model_full.pt (best val MAE 2.09 in native units)
+epoch   2/40 | train MSE 0.1279 MAE  1.95 | val MSE 0.0986 MAE  1.70 | gap -0.24 | lr 1.0e-03 | 122s
+  -> saved best_model_full.pt (best val MAE 1.70 in native units)
+epoch   3/40 | train MSE 0.1082 MAE  1.80 | val MSE 0.0918 MAE  1.63 | gap -0.17 | lr 1.0e-03 | 125s
+  -> saved best_model_full.pt (best val MAE 1.63 in native units)
+epoch   4/40 | train MSE 0.0969 MAE  1.71 | val MSE 0.0835 MAE  1.56 | gap -0.14 | lr 1.0e-03 | 89s
+  -> saved best_model_full.pt (best val MAE 1.56 in native units)
+epoch   5/40 | train MSE 0.0908 MAE  1.65 | val MSE 0.0768 MAE  1.59 | gap -0.06 | lr 1.0e-03 | 107s
+epoch   6/40 | train MSE 0.0859 MAE  1.61 | val MSE 0.0750 MAE  1.54 | gap -0.07 | lr 1.0e-03 | 96s
+  -> saved best_model_full.pt (best val MAE 1.54 in native units)
+epoch   7/40 | train MSE 0.0827 MAE  1.59 | val MSE 0.0728 MAE  1.47 | gap -0.12 | lr 1.0e-03 | 79s
+  -> saved best_model_full.pt (best val MAE 1.47 in native units)
+epoch   8/40 | train MSE 0.0803 MAE  1.56 | val MSE 0.0735 MAE  1.65 | gap +0.09 | lr 1.0e-03 | 89s
+epoch   9/40 | train MSE 0.0778 MAE  1.54 | val MSE 0.0691 MAE  1.43 | gap -0.11 | lr 1.0e-03 | 85s
+  -> saved best_model_full.pt (best val MAE 1.43 in native units)
+epoch  10/40 | train MSE 0.0759 MAE  1.52 | val MSE 0.0680 MAE  1.42 | gap -0.11 | lr 1.0e-03 | 94s
+  -> saved best_model_full.pt (best val MAE 1.42 in native units)
+epoch  11/40 | train MSE 0.0749 MAE  1.51 | val MSE 0.0665 MAE  1.43 | gap -0.08 | lr 1.0e-03 | 74s
+epoch  12/40 | train MSE 0.0731 MAE  1.50 | val MSE 0.0670 MAE  1.43 | gap -0.07 | lr 1.0e-03 | 104s
+epoch  13/40 | train MSE 0.0719 MAE  1.49 | val MSE 0.0666 MAE  1.61 | gap +0.12 | lr 1.0e-03 | 79s
+epoch  14/40 | train MSE 0.0712 MAE  1.48 | val MSE 0.0648 MAE  1.44 | gap -0.05 | lr 1.0e-03 | 80s
+epoch  15/40 | train MSE 0.0707 MAE  1.48 | val MSE 0.0646 MAE  1.39 | gap -0.09 | lr 1.0e-03 | 74s
+  -> saved best_model_full.pt (best val MAE 1.39 in native units)
+epoch  16/40 | train MSE 0.0696 MAE  1.46 | val MSE 0.0635 MAE  1.45 | gap -0.01 | lr 1.0e-03 | 80s
+epoch  17/40 | train MSE 0.0684 MAE  1.45 | val MSE 0.0642 MAE  1.49 | gap +0.04 | lr 1.0e-03 | 95s
+epoch  18/40 | train MSE 0.0680 MAE  1.45 | val MSE 0.0630 MAE  1.39 | gap -0.06 | lr 1.0e-03 | 110s
+epoch  19/40 | train MSE 0.0673 MAE  1.44 | val MSE 0.0631 MAE  1.38 | gap -0.07 | lr 1.0e-03 | 90s
+  -> saved best_model_full.pt (best val MAE 1.38 in native units)
+epoch  20/40 | train MSE 0.0668 MAE  1.43 | val MSE 0.0614 MAE  1.35 | gap -0.08 | lr 1.0e-03 | 95s
+  -> saved best_model_full.pt (best val MAE 1.35 in native units)
+epoch  21/40 | train MSE 0.0661 MAE  1.43 | val MSE 0.0621 MAE  1.43 | gap -0.00 | lr 1.0e-03 | 95s
+epoch  22/40 | train MSE 0.0656 MAE  1.42 | val MSE 0.0609 MAE  1.43 | gap +0.01 | lr 1.0e-03 | 74s
+epoch  23/40 | train MSE 0.0649 MAE  1.42 | val MSE 0.0606 MAE  1.39 | gap -0.03 | lr 1.0e-03 | 94s
+epoch  24/40 | train MSE 0.0648 MAE  1.42 | val MSE 0.0598 MAE  1.42 | gap +0.01 | lr 1.0e-03 | 74s
+epoch  25/40 | train MSE 0.0641 MAE  1.41 | val MSE 0.0612 MAE  1.34 | gap -0.07 | lr 1.0e-03 | 79s
+  -> saved best_model_full.pt (best val MAE 1.34 in native units)
+epoch  26/40 | train MSE 0.0637 MAE  1.41 | val MSE 0.0609 MAE  1.41 | gap -0.00 | lr 1.0e-03 | 74s
+epoch  27/40 | train MSE 0.0641 MAE  1.41 | val MSE 0.0588 MAE  1.37 | gap -0.04 | lr 1.0e-03 | 95s
+epoch  28/40 | train MSE 0.0632 MAE  1.40 | val MSE 0.0599 MAE  1.37 | gap -0.03 | lr 1.0e-03 | 100s
+epoch  29/40 | train MSE 0.0633 MAE  1.40 | val MSE 0.0582 MAE  1.33 | gap -0.07 | lr 1.0e-03 | 95s
+  -> saved best_model_full.pt (best val MAE 1.33 in native units)
+epoch  30/40 | train MSE 0.0626 MAE  1.39 | val MSE 0.0578 MAE  1.30 | gap -0.10 | lr 1.0e-03 | 74s
+  -> saved best_model_full.pt (best val MAE 1.30 in native units)
+epoch  31/40 | train MSE 0.0621 MAE  1.39 | val MSE 0.0587 MAE  1.32 | gap -0.06 | lr 1.0e-03 | 90s
+epoch  32/40 | train MSE 0.0622 MAE  1.39 | val MSE 0.0588 MAE  1.38 | gap -0.00 | lr 1.0e-03 | 95s
+epoch  33/40 | train MSE 0.0621 MAE  1.39 | val MSE 0.0596 MAE  1.41 | gap +0.02 | lr 1.0e-03 | 115s
+epoch  34/40 | train MSE 0.0612 MAE  1.38 | val MSE 0.0576 MAE  1.31 | gap -0.07 | lr 1.0e-03 | 100s
+epoch  35/40 | train MSE 0.0612 MAE  1.38 | val MSE 0.0585 MAE  1.51 | gap +0.13 | lr 1.0e-03 | 85s
+epoch  36/40 | train MSE 0.0610 MAE  1.38 | val MSE 0.0585 MAE  1.33 | gap -0.04 | lr 1.0e-03 | 91s
+epoch  37/40 | train MSE 0.0608 MAE  1.38 | val MSE 0.0569 MAE  1.31 | gap -0.07 | lr 1.0e-03 | 99s
+epoch  38/40 | train MSE 0.0605 MAE  1.37 | val MSE 0.0573 MAE  1.37 | gap -0.00 | lr 1.0e-03 | 90s
+  -> early stop: no val-MAE gain for 8 epochs (best 1.30). Stopping at epoch 38.
+
+Done. Best val MAE: 1.30 (native units of UnifiedQualityScore.native).
+Training-curve plot saved -> train_curve_full.png
+
+---------------- OVERFITTING DIAGNOSIS ----------------
+  best val MAE      : 1.30 at epoch 30/38
+  final train MAE   : 1.37   final val MAE: 1.37
+  generalisation gap: -0.00 score points (val - train MAE)
+  val/train MSE ratio: 0.9x  (1x = no overfit; big = memorising)
+  epochs after best : 8  (training continued with no val gain)
+  >> SIGNS OF OVERFITTING DETECTED:
+     - val peaked at epoch 30 but training ran 8 more epochs -> use early stopping
+-------------------------------------------------------
+
+FULL retrain finished at: Tue Jun 30 03:17:48 AM EDT 2026
+Loading CRC_default/1.1
