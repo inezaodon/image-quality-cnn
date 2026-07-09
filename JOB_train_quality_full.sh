@@ -16,14 +16,31 @@ nvidia-smi --query-gpu=index,name,memory.total --format=csv
 # Re-train on the COMPLETE OFIQ output (all images scored by the time this runs).
 # The script auto-filters to rows whose image exists and drops any failed/NaN rows,
 # so it transparently handles ffhq_MISSING_list.txt cases.
-# Uses SmallResNet (resnet_small, ~0.5M params) with spatial dropout and
+# Uses SmallResNet (resnet_small, ~0.33M params) with spatial dropout and
 # UnifiedQualityScore.native (the raw linear measure) to reduce overfitting.
+#
+# --tail-weight 0.5 is the regression-to-the-mean fix: inverse-sqrt-frequency
+# weighting of rare extreme-quality images (see "Technical Reports/fixes/
+# FIXES.md" #1). The sigmoid head is kept (--head sigmoid is the default);
+# any residual compression can be handled post-hoc with `evaluate.py --calibrate`.
+#
+# --aux 10 --aux-weight 0.3 is the multi-task improvement (FIXES.md #9): the
+# model also predicts the 10 OFIQ component measures most correlated with the
+# unified score, forcing the backbone to learn WHY an image is low quality.
+# Training-time only; inference still returns the unified score.
+#
+# --img-size 256 (FIXES.md #10): FFHQ images are native 256x256; training at
+# 224 threw away fine detail that sharpness-type measures depend on.
 python train_quality.py \
     --csv ffhq_all_results.csv \
     --root . \
     --target UnifiedQualityScore.native \
     --arch resnet_small \
     --loss combined \
+    --tail-weight 0.5 \
+    --aux 10 \
+    --aux-weight 0.3 \
+    --img-size 256 \
     --grad-clip 1.0 \
     --lr 1e-3 \
     --epochs 40 \

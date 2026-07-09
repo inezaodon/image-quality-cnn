@@ -1,0 +1,294 @@
+\documentclass[12pt, letterpaper]{article}
+
+\setlength\voffset{0pt}
+\setlength\topmargin{0pt}
+\addtolength\topmargin{-0.5in}
+\setlength\hoffset{0pt}
+\setlength\marginparwidth{0pt}
+\setlength\oddsidemargin{0pt}
+\setlength\textwidth{\paperwidth}
+\addtolength\textwidth{-2in}
+\setlength\textheight{\paperheight}
+\addtolength\textheight{-2in}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{4pt}
+
+\usepackage{graphicx}
+\usepackage{mathptmx}
+\usepackage{tabularx}
+\usepackage{array}
+\usepackage{booktabs}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{needspace}
+\usepackage{etoolbox}
+\usepackage{enumitem}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\hypersetup{colorlinks=true, linkcolor=blue!50!black, urlcolor=blue!50!black}
+
+\pretocmd{\section}{\needspace{8\baselineskip}}{}{}
+\clubpenalty=10000
+\widowpenalty=10000
+\emergencystretch=2.5em
+
+\newcolumntype{Y}{>{\raggedright\arraybackslash}X}
+\newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
+
+\newcommand{\code}[1]{\texttt{#1}}
+\newcommand{\problem}[1]{\textbf{Problem.}~#1}
+\newcommand{\fix}[1]{\textbf{Fix.}~#1}
+
+\title{\textbf{Model, Documentation, and Visualization Fixes}\\[4pt]
+\large Companion to the Face Image Quality Prediction Technical Report}
+\author{Face Quality Prediction Project --- Fix Log}
+\date{July 9, 2026}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+\noindent
+An audit of the trained quality-prediction model, its evaluation artifacts, and its
+documentation against the ground-truth OFIQ data surfaced ten items: three model
+deficiencies (regression to the mean at the score extremes, unused component labels,
+training below native image resolution), one training-stability issue (periodic
+validation-error spikes), four documentation contradictions, and two visualization
+gaps. This document states each problem, the evidence for it, and the fix applied.
+Code fixes land in \code{train\_quality.py}, \code{evaluate.py}, and the report's
+figure scripts; documentation fixes land in \code{REPORT.md}. Fixes 1--2 and 9--10
+change training behaviour and take full effect on the next training run; all others
+are already in effect.
+\end{abstract}
+
+\paragraph{Note on dropout.}
+The architecture \emph{does} contain dropout --- spatial dropout (\code{Dropout2d},
+$p=0.10$) inside every residual block and two head dropout layers ($p=0.30$) --- but
+dropout is active \textbf{only during the training (weight-update) passes}. In eval
+mode (\code{model.eval()}) PyTorch disables all dropout layers automatically, so
+validation, logged metrics, \code{evaluate.py}, and deployment inference all run
+dropout-free. Wherever this document or the technical report says ``dropout on/off'',
+it refers to this measurement/inference distinction, never to an architecture change:
+every run trains with dropout and evaluates without it.
+
+\section{Regression to the Mean at Score Extremes}
+
+\problem{The validation scatter (\code{eval\_scatter\_full.png}) shows predictions pulled
+toward the mean of the label distribution: images with true score below ${\sim}16$ are
+systematically over-predicted, and images above ${\sim}29$ are under-predicted. Three
+causes compound: (i) only $0.37\%$ of labels fall below 15 and $1.0\%$ above 30, so the
+mean-squared-error loss is dominated by the mid-range bulk; (ii) MSE itself is
+mean-seeking under label scarcity; and (iii) the sigmoid output head saturates exactly
+where the rare labels live. For the assumed downstream use --- a quality critic inside a
+GAN loss --- this is the worst possible failure mode, because the critic's gradient is
+weakest precisely on the worst images.}
+
+\fix{Three complementary changes:
+\begin{enumerate}[leftmargin=1.6em, itemsep=1pt]
+  \item \textbf{Tail-weighted loss} (\code{train\_quality.py}, new \code{--tail-weight}
+        flag). Per-sample weights $w(y) \propto \mathrm{freq}(y)^{-p}$ are computed from
+        the \emph{train-split} label histogram (20 bins), normalised so their expectation
+        over the data distribution is 1, and capped at $5\times$. With $p=0.5$
+        (inverse-square-root), rare extreme scores contribute proportionally more
+        gradient without destabilising the loss scale. Default $p=0$ preserves the
+        existing behaviour exactly.
+  \item \textbf{Linear output head} (new \code{--head linear} flag). Replaces the final
+        sigmoid with identity, removing saturation at the range ends. The head type is
+        stored in the checkpoint; \code{evaluate.py} clamps predictions to the valid
+        scaled range at inference, so the contract is unchanged.
+  \item \textbf{Post-hoc isotonic calibration} (\code{evaluate.py}, new
+        \code{--calibrate} flag). A monotone map from prediction to target is fitted with
+        the pool-adjacent-violators algorithm (pure NumPy, no scikit-learn dependency,
+        so it runs on the offline compute node) on one half of the validation set and
+        scored on the other half --- calibration is never fitted and evaluated on the
+        same images. Because the correction is monotone, Spearman $\rho$ is preserved by
+        construction. On synthetic data with compression slope $0.60$, the correction
+        recovered a slope of $0.96$ and halved the MAE. This fix requires no retraining.
+\end{enumerate}
+Items 1--2 require a retraining run on the cluster; item 3 works with the existing
+checkpoint immediately.}
+
+\section{Periodic Training Spikes}
+
+\problem{The training curves show sharp validation-MAE spikes at epochs 15, 20, 22, 26,
+and 34 --- including after the learning rate had already been halved, which rules out a
+simple step-size explanation. The likely cause is the Pearson term of the combined loss:
+it is computed per batch (64 images), and when a batch happens to carry near-constant
+targets, the correlation denominator $\|\mathbf{p}\|\,\|\mathbf{t}\|$ approaches zero.
+The previous guard added a tiny $\varepsilon = 10^{-8}$ to the denominator, which keeps
+the \emph{value} finite but still lets the \emph{gradient} blow up.}
+
+\fix{The denominator is now clamped from below at $10^{-4}$ rather than
+$\varepsilon$-padded:
+\[
+r \;=\; \frac{\sum_i p_i\, t_i}{\max\!\bigl(\|\mathbf{p}\|\,\|\mathbf{t}\|,\; 10^{-4}\bigr)} .
+\]
+On normal batches the denominator is orders of magnitude above the clamp, so behaviour
+is unchanged; on degenerate low-variance batches the gradient magnitude is now bounded.}
+
+\section{False ``No Early-Stopping Leakage'' Claim}
+
+\problem{\code{REPORT.md} stated the 7{,}000 validation images were ``never seen during
+training, not even for early stopping decisions.'' The code contradicts this: validation
+MSE drives both early stopping and the \code{ReduceLROnPlateau} scheduler every epoch.
+Using validation data as a model-selection signal is standard, defensible practice ---
+but the claim as written was factually wrong and would not survive review.}
+
+\fix{Rewritten to the accurate formulation: the validation images were never used for
+\emph{gradient updates}; they do drive early stopping and learning-rate scheduling,
+which leaks no pixels or labels into the weights.}
+
+\section{Spearman $\rho$ Misinterpretation}
+
+\problem{\code{REPORT.md} described $\rho = 0.867$ as ``the model ranks images in the
+correct quality order 86.7\% of the time.'' Spearman $\rho$ is a rank correlation
+coefficient on $[-1, 1]$, not a percentage of correctly ordered pairs (the statistic
+resembling that reading is Kendall's $\tau$, and even $\tau$ is not literally a
+percentage).}
+
+\fix{Reworded: $\rho = 0.867$ indicates strong monotonic agreement between the model's
+quality ranking and OFIQ's ($1.0$ = identical ordering; $0$ = no relationship).}
+
+\section{Parameter-Count Inconsistency}
+
+\problem{\code{REPORT.md} (three places) and a comment in \code{train\_quality.py}
+claimed the model has ${\sim}0.5$\,M parameters; the training log prints the actual
+count, $0.33$\,M.}
+
+\fix{All four occurrences corrected to ${\sim}0.33$\,M.}
+
+\section{Early-Stopping Metric: Documentation vs.\ Code}
+
+\problem{The \code{train\_quality.py} docstring, the \code{--patience} help text, and
+\code{REPORT.md}~\S4.8 all said early stopping monitors validation \emph{MAE}. The
+implementation monitors validation \emph{MSE} (deliberately --- it is the smoother of
+the two metrics epoch-to-epoch).}
+
+\fix{Docstring, help text, and \code{REPORT.md} corrected to validation MSE, with the
+rationale stated.}
+
+\section{Metrics Figure Mixes Incompatible Units}
+
+\problem{\code{fig\_metrics\_summary.png} placed MAE and RMSE (native score units,
+values near 1.3--2.7) on the same axis as Pearson~$r$, Spearman~$\rho$, and $R^2$
+(unitless, bounded by 1). The correlation metrics --- the strongest results --- looked
+visually insignificant next to the baseline-MAE bar.}
+
+\fix{\code{scripts/generate\_figures.py} now renders two panels: error metrics in native
+units with the always-guess-the-mean baseline line, and correlation metrics on a
+dedicated $[0, 1]$ axis with the perfect-score reference at $1.0$. The figure was
+regenerated and the technical report PDF recompiled.}
+
+\section{Missing Diagnostic Visualizations}
+
+\problem{No existing figure exposes the tail bias directly, quantifies the calibration
+slope, or identifies \emph{which} OFIQ component measures correlate with the model's
+errors. All three require per-image predictions, which \code{evaluate.py} computed but
+never saved.}
+
+\fix{Two changes:
+\begin{enumerate}[leftmargin=1.6em, itemsep=1pt]
+  \item \code{evaluate.py} now writes \code{<model>\_val\_preds.csv} (Filename, true,
+        pred) by default, plus \code{<model>\_train\_preds.csv} for the train-scatter
+        sample.
+  \item New \code{scripts/generate\_diagnostic\_figures.py} builds three figures from
+        that CSV:
+        \begin{itemize}[leftmargin=1.4em, itemsep=1pt]
+          \item \code{fig\_binned\_residuals.png} --- mean residual $\pm$ std per
+                true-score bin; tail compression appears as positive bias at low
+                scores and negative bias at high scores;
+          \item \code{fig\_calibration.png} --- least-squares slope of predicted vs.\
+                true against the ideal $y = x$;
+          \item \code{fig\_component\_correlation.png} --- correlation of the residual
+                with every OFIQ \code{.native} component measure.
+        \end{itemize}
+        If the predictions CSV does not exist yet, the script prints the exact
+        \code{evaluate.py} command to produce it and exits cleanly.
+\end{enumerate}
+The figures themselves require one \code{evaluate.py} run on a machine holding the
+images (the cluster); everything else is in place.}
+
+\section{Single-Task Training Wastes the Component Labels}
+
+\problem{The OFIQ CSV contains 27 component \code{.native} measures per image ---
+occlusion, eye visibility, face margins, compression artifacts, luminance statistics,
+and more --- but the model only ever saw the single unified score. It learns
+\emph{that} an image is low quality without being pushed to learn \emph{why}, which
+yields weaker features, particularly for the rare defect types that populate the
+tails of the score distribution.}
+
+\fix{Multi-task learning (\code{train\_quality.py}, new \code{--aux K} and
+\code{--aux-weight W} flags; the job script uses \code{--aux 10 --aux-weight 0.3}):
+\begin{enumerate}[leftmargin=1.6em, itemsep=1pt]
+  \item At startup, the $K$ component measures most correlated with the unified
+        score are selected on the \emph{train split} only. On the real data the
+        ranking is led by \code{FaceOcclusionPrevention} ($|r|=0.39$),
+        \code{EyesVisible} ($0.27$), \code{MarginBelowOfTheFaceImage} ($0.25$),
+        and \code{HeadSize} ($0.20$). Each is min--max scaled to $[0,1]$ with
+        train-split ranges.
+  \item Both architectures gain an auxiliary head off the same pooled features,
+        and the training loss becomes
+        $\mathcal{L} = \mathcal{L}_{\text{main}} + W \cdot
+        \mathrm{MSE}(\hat{\mathbf{c}}, \mathbf{c})$
+        where $\mathbf{c}$ is the vector of scaled component scores.
+  \item The auxiliary head is a \emph{training-time regulariser only}: the
+        validation and train-eval loaders remain main-task-only, so the logged
+        curves, early stopping, and learning-rate scheduling stay directly
+        comparable to previous runs. \code{evaluate.py} and
+        \code{model\_architecture.py} recognise multi-task checkpoints via
+        \code{ckpt["aux\_cols"]} and use the unified-score output for inference.
+\end{enumerate}}
+
+\section{Training Below Native Image Resolution}
+
+\problem{FFHQ images are native $256 \times 256$, but training resized them to
+$224 \times 224$ --- discarding exactly the fine detail that sharpness- and
+compression-type quality cues depend on, before the model ever saw them.}
+
+\fix{Train at native resolution: \code{--img-size 256} added to
+\code{JOB\_train\_quality\_full.sh} (the flag already existed, and adaptive pooling
+makes the architecture resolution-agnostic). Costs roughly $30\%$ more GPU time per
+epoch. \code{evaluate.py} reads \code{img\_size} from the checkpoint, so evaluation
+follows automatically.}
+
+\section{Status Summary}
+
+\begin{table}[h!]
+\centering
+\small
+\begin{tabularx}{\textwidth}{@{}c L{0.30\textwidth} l Y@{}}
+\toprule
+\# & Problem & Type & Status \\
+\midrule
+1 & Tail compression / regression to mean & Model & Implemented; needs retrain
+    (\code{--tail-weight 0.5}, optionally \code{--head linear});
+    \code{--calibrate} usable now \\
+2 & Periodic training spikes & Stability & Fixed (Pearson denominator clamp) \\
+3 & Early-stopping leakage claim & Docs & Fixed in \code{REPORT.md} \\
+4 & Spearman $\rho$ misread & Docs & Fixed in \code{REPORT.md} \\
+5 & Parameter count $0.5$M vs $0.33$M & Docs & Fixed in \code{REPORT.md} + code comment \\
+6 & Early-stop MAE vs MSE wording & Docs/code & Fixed in docstring, help, \code{REPORT.md} \\
+7 & Mixed-unit metrics figure & Viz & Fixed; figure regenerated, PDF recompiled \\
+8 & Missing diagnostics & Viz & Scripts ready; figures generate once the
+    predictions CSV exists \\
+9 & Component labels unused & Model & Implemented; in job script
+    (\code{--aux 10 --aux-weight 0.3}); takes effect on retrain \\
+10 & Trained below native resolution & Model & In job script
+    (\code{--img-size 256}); takes effect on retrain \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\vspace{6pt}
+\textbf{Recommended next run (cluster):} submit \code{JOB\_train\_quality\_full.sh}
+--- fixes 1, 9, and 10 are baked into its flags
+(\code{--tail-weight 0.5 --aux 10 --aux-weight 0.3 --img-size 256}) --- then
+\begin{quote}
+\small
+\code{python evaluate.py --model best\_model\_full.pt --plot eval\_scatter\_full.png}\\
+\code{\hspace*{2em}--calibrate}
+\end{quote}
+Compare the new binned-residual and calibration figures against the current checkpoint's
+to confirm the tail bias has narrowed without hurting mid-range MAE.
+
+\end{document}

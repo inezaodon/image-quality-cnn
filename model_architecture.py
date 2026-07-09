@@ -23,13 +23,28 @@ WHAT ELSE IS IN THE CHECKPOINT (all plain Python values, not model code)
     ckpt["arch"]       -> "resnet_small" (confirms which architecture to use)
     ckpt["target"]      -> "UnifiedQualityScore.native" (the OFIQ column it predicts)
     ckpt["img_size"]    -> 224 (resize input images to this before feeding them in)
-    ckpt["epoch"]       -> 40 (the final epoch trained; the checkpoint is always saved
+    ckpt["epoch"]       -> the final epoch trained (the checkpoint is always saved
                            from the last epoch actually run, not from whichever epoch
                            had the lowest validation MSE -- see train_quality.py's
                            training loop for the save call)
     ckpt["val_mse"]/["val_mae"] -> the validation error at that epoch
+    ckpt["head_act"]    -> "sigmoid" or "linear" (newer checkpoints only; older
+                           checkpoints predate the flag and are always sigmoid).
+                           Pass it to SmallResNet(head_act=...) below. For a
+                           linear head, clamp the raw output to [0, 1] before
+                           un-scaling (np.clip / tensor.clamp), matching evaluate.py.
+    ckpt["tail_weight"] -> inverse-frequency loss-weighting power used at training
+                           time (newer checkpoints only; 0.0 = plain loss). Purely
+                           informational for inference.
+    ckpt["aux_cols"]    -> list of OFIQ component columns the model ALSO predicts
+                           (newer multi-task checkpoints only; [] or missing =
+                           single-task). If non-empty, build the model with
+                           SmallResNet(n_aux=len(ckpt["aux_cols"])) and note that
+                           forward() then returns a TUPLE (unified, components);
+                           take element [0] for the quality score.
 
-The model's raw output is a single number in [0, 1] (from the final Sigmoid).
+The model's raw output is a single number in [0, 1] (from the final Sigmoid;
+for head_act="linear" it is unbounded and must be clamped as noted above).
 To convert it back to a real OFIQ score, undo the min-max scaling used at
 training time, stored right here in the checkpoint:
 
@@ -105,8 +120,15 @@ class BasicBlock(nn.Module):
 
 class SmallResNet(nn.Module):
     """The architecture best_model_full.pt was trained with (~0.33M params).
-    stem -> 4 residual stages (16 -> 32 -> 64 -> 128 channels) -> pooled head."""
-    def __init__(self, widths=(16, 32, 64, 128), drop=0.10, head_drop=0.30):
+    stem -> 4 residual stages (16 -> 32 -> 64 -> 128 channels) -> pooled head.
+
+    head_act: "sigmoid" (default, matches every checkpoint trained before the
+    flag existed) or "linear" (newer checkpoints; check ckpt["head_act"]).
+    n_aux: number of auxiliary OFIQ component outputs (multi-task checkpoints;
+    check len(ckpt["aux_cols"])). When n_aux > 0, forward() returns a tuple
+    (unified_score, component_scores) -- use element [0] for inference."""
+    def __init__(self, widths=(16, 32, 64, 128), drop=0.10, head_drop=0.30,
+                 head_act="sigmoid", n_aux=0):
         super().__init__()
         w0, w1, w2, w3 = widths
         self.stem = nn.Sequential(
@@ -127,8 +149,18 @@ class SmallResNet(nn.Module):
             nn.ReLU(inplace=True),
             nn.Dropout(head_drop),
             nn.Linear(w3 // 2, 1),
-            nn.Sigmoid(),
+            nn.Sigmoid() if head_act == "sigmoid" else nn.Identity(),
         )
+        self.aux_head = None
+        if n_aux > 0:
+            self.aux_head = nn.Sequential(
+                nn.Flatten(),
+                nn.Dropout(head_drop),
+                nn.Linear(w3, w3 // 2),
+                nn.ReLU(inplace=True),
+                nn.Linear(w3 // 2, n_aux),
+                nn.Sigmoid() if head_act == "sigmoid" else nn.Identity(),
+            )
 
     def forward(self, x):
         x = self.stem(x)
@@ -136,4 +168,8 @@ class SmallResNet(nn.Module):
         x = self.layer2(x)
         x = self.layer3(x)
         x = self.layer4(x)
-        return self.head(self.pool(x))
+        feat = self.pool(x)
+        out = self.head(feat)
+        if self.aux_head is not None:
+            return out, self.aux_head(feat)
+        return out

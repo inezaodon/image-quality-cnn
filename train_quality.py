@@ -25,10 +25,21 @@ Anti-overfitting toolbox (all on by default, tune via flags):
   - weight decay (L2) via AdamW
   - data augmentation (random crop / flip / colour jitter)
   - a deliberately SMALL ResNet (resnet_small) as an alternative to resnet18
-  - early stopping on val MAE
+  - early stopping on val MSE (the smoother metric; see the training loop)
   - gradient clipping (--grad-clip 1.0) to prevent training spikes
   - combined MSE + Pearson-correlation loss (--loss combined) to directly
     optimise the correlation metrics the evaluator measures
+  - optional inverse-frequency tail weighting (--tail-weight 0.5) so rare
+    extreme-quality images get proportionally more gradient -- the fix for
+    regression-to-the-mean at the score extremes
+  - optional linear output head (--head linear) to remove sigmoid saturation
+    at the extremes of the score range
+  - optional multi-task auxiliary head (--aux 10): also predicts the K OFIQ
+    component measures most correlated with the unified score (sharpness,
+    occlusion, margins, ...). Forces the backbone to learn WHY an image is
+    low quality, not just that it is -- consistently improves the main task.
+    The aux head is a training-time regulariser only; inference still returns
+    the unified score.
   - per-epoch overfitting diagnostics + a training-curve plot
 
 Run it on the GPU node via JOB_train_quality_full.sh, or directly:
@@ -55,7 +66,8 @@ from torchvision import transforms, models
 # Targets are min-max scaled to [0,1] with the (lo, hi) computed from TRAIN.   #
 # --------------------------------------------------------------------------- #
 class FFHQQualityDataset(Dataset):
-    def __init__(self, dataframe, root, target_col, transform, lo, hi):
+    def __init__(self, dataframe, root, target_col, transform, lo, hi,
+                 aux_cols=None, aux_lo=None, aux_hi=None):
         # dataframe already filtered to rows whose image exists
         self.files = dataframe["Filename"].tolist()
         raw = dataframe[target_col].astype("float32").to_numpy()
@@ -64,6 +76,12 @@ class FFHQQualityDataset(Dataset):
         self.targets = ((raw - lo) / (hi - lo)).tolist()
         self.root = root
         self.transform = transform
+        # optional auxiliary targets (OFIQ component measures), each min-max
+        # scaled to [0,1] with its own train-split (lo, hi) -- multi-task learning.
+        self.aux = None
+        if aux_cols:
+            raw_aux = dataframe[aux_cols].astype("float32").to_numpy()
+            self.aux = (raw_aux - aux_lo) / (aux_hi - aux_lo)
 
     def __len__(self):
         return len(self.files)
@@ -76,6 +94,8 @@ class FFHQQualityDataset(Dataset):
         img = Image.open(path).convert("RGB")
         img = self.transform(img)
         target = torch.tensor([self.targets[idx]], dtype=torch.float32)
+        if self.aux is not None:
+            return img, target, torch.tensor(self.aux[idx], dtype=torch.float32)
         return img, target
 
 
@@ -106,8 +126,15 @@ class SEBlock(nn.Module):
         return x * self.se(x).unsqueeze(-1).unsqueeze(-1)
 
 
+def _head_activation(head_act):
+    """'sigmoid' bounds the output to [0,1] (matches the scaled target) but
+    saturates at the extremes -> contributes to regression-to-the-mean.
+    'linear' leaves the output unbounded; evaluate.py clamps at inference."""
+    return nn.Sigmoid() if head_act == "sigmoid" else nn.Identity()
+
+
 class SimpleCNN(nn.Module):
-    def __init__(self, drop2d=0.10, head_drop=0.40):
+    def __init__(self, drop2d=0.10, head_drop=0.40, head_act="sigmoid", n_aux=0):
         super().__init__()
 
         def block(cin, cout):
@@ -134,18 +161,33 @@ class SimpleCNN(nn.Module):
             nn.ReLU(inplace=True),
             nn.Dropout(head_drop),
             nn.Linear(64, 1),
-            nn.Sigmoid(),  # keep output in [0, 1] to match the scaled target
+            _head_activation(head_act),
         )
+        # multi-task: predict n_aux OFIQ component measures from the same features
+        self.aux_head = None
+        if n_aux > 0:
+            self.aux_head = nn.Sequential(
+                nn.Flatten(),
+                nn.Dropout(head_drop),
+                nn.Linear(256, 64),
+                nn.ReLU(inplace=True),
+                nn.Linear(64, n_aux),
+                _head_activation(head_act),
+            )
 
     def forward(self, x):
-        return self.head(self.features(x))
+        feat = self.features(x)
+        out = self.head(feat)
+        if self.aux_head is not None:
+            return out, self.aux_head(feat)
+        return out
 
 
 # --------------------------------------------------------------------------- #
 # Model 2: the SMALLEST sensible ResNet, built from scratch.                   #
 # torchvision's smallest is resnet18 (~11M params); on 70k images with strong  #
 # labels it has way more capacity than needed and overfits hard. This custom   #
-# ResNet uses ONE residual block per stage and narrow widths (~0.5M params),   #
+# ResNet uses ONE residual block per stage and narrow widths (~0.33M params),  #
 # plus spatial dropout inside each block. Smaller capacity = less overfitting. #
 # No pretrained weights -> works on the offline compute node.                  #
 # --------------------------------------------------------------------------- #
@@ -175,7 +217,8 @@ class BasicBlock(nn.Module):
 
 
 class SmallResNet(nn.Module):
-    def __init__(self, widths=(16, 32, 64, 128), drop=0.10, head_drop=0.30):
+    def __init__(self, widths=(16, 32, 64, 128), drop=0.10, head_drop=0.30,
+                 head_act="sigmoid", n_aux=0):
         super().__init__()
         w0, w1, w2, w3 = widths
         self.stem = nn.Sequential(
@@ -196,8 +239,19 @@ class SmallResNet(nn.Module):
             nn.ReLU(inplace=True),
             nn.Dropout(head_drop),
             nn.Linear(w3 // 2, 1),
-            nn.Sigmoid(),
+            _head_activation(head_act),
         )
+        # multi-task: predict n_aux OFIQ component measures from the same features
+        self.aux_head = None
+        if n_aux > 0:
+            self.aux_head = nn.Sequential(
+                nn.Flatten(),
+                nn.Dropout(head_drop),
+                nn.Linear(w3, w3 // 2),
+                nn.ReLU(inplace=True),
+                nn.Linear(w3 // 2, n_aux),
+                _head_activation(head_act),
+            )
 
     def forward(self, x):
         x = self.stem(x)
@@ -205,22 +259,30 @@ class SmallResNet(nn.Module):
         x = self.layer2(x)
         x = self.layer3(x)
         x = self.layer4(x)
-        return self.head(self.pool(x))
+        feat = self.pool(x)
+        out = self.head(feat)
+        if self.aux_head is not None:
+            return out, self.aux_head(feat)
+        return out
 
 
-def build_model(arch, head_drop=None):
+def build_model(arch, head_drop=None, head_act="sigmoid", n_aux=0):
     if arch == "simple":
-        return SimpleCNN(head_drop=0.40 if head_drop is None else head_drop)
+        return SimpleCNN(head_drop=0.40 if head_drop is None else head_drop,
+                         head_act=head_act, n_aux=n_aux)
     if arch == "resnet_small":
-        return SmallResNet(head_drop=0.30 if head_drop is None else head_drop)
+        return SmallResNet(head_drop=0.30 if head_drop is None else head_drop,
+                           head_act=head_act, n_aux=n_aux)
     if arch == "resnet18":
+        if n_aux > 0:
+            raise ValueError("--aux is only supported for arch simple/resnet_small")
         # pretrained weights need internet/cache; download on the front-end first.
         m = models.resnet18(weights="IMAGENET1K_V1")
         # add dropout before the final layer so the big pretrained net regularises.
         m.fc = nn.Sequential(
             nn.Dropout(0.40 if head_drop is None else head_drop),
             nn.Linear(m.fc.in_features, 1),
-            nn.Sigmoid(),
+            _head_activation(head_act),
         )
         return m
     raise ValueError(f"unknown arch: {arch}")
@@ -229,6 +291,32 @@ def build_model(arch, head_drop=None):
 # --------------------------------------------------------------------------- #
 # Loss function                                                                #
 # --------------------------------------------------------------------------- #
+def make_tail_weight_fn(scaled_targets, n_bins=20, power=0.5, max_w=5.0):
+    """Build a per-sample weight function from the TRAIN label distribution.
+
+    The label histogram is heavily concentrated in the mid-range (only ~0.4% of
+    scores below 15 and ~1% above 30 in native units), so plain MSE barely sees
+    the tails and the model regresses extreme predictions toward the mean.
+    Weight w(y) ~ freq(y)^-power up-weights rare scores; power=0.5 is a gentle
+    inverse-sqrt reweighting. Weights are normalised so their expectation over
+    the data distribution is 1 (loss scale unchanged), then capped at max_w so
+    a handful of ultra-rare images can't dominate a batch.
+    """
+    hist, edges = np.histogram(scaled_targets, bins=n_bins, range=(0.0, 1.0))
+    freq = hist / max(hist.sum(), 1)
+    w = (freq + 1e-6) ** (-power)
+    w = w / (freq * w).sum()          # E[w] = 1 over the train distribution
+    w = np.clip(w, None, max_w)
+    w_t = torch.tensor(w, dtype=torch.float32)
+    inner_edges = torch.tensor(edges[1:-1], dtype=torch.float32)
+
+    def weight_fn(targets: torch.Tensor) -> torch.Tensor:
+        idx = torch.bucketize(targets.detach().reshape(-1).float().cpu(), inner_edges)
+        return w_t[idx].reshape(targets.shape).to(targets.device)
+
+    return weight_fn
+
+
 class CombinedLoss(nn.Module):
     """MSE + (1 - Pearson r): optimises both score magnitude AND ranking.
 
@@ -238,25 +326,44 @@ class CombinedLoss(nn.Module):
     the evaluator measures with Spearman rho and Pearson r.
 
     pearson_w=0.4 means 60% MSE (magnitude) + 40% correlation (ranking).
+
+    weight_fn (optional): maps targets -> per-sample weights; used to
+    up-weight rare extreme-quality images in the MSE term (see
+    make_tail_weight_fn). The Pearson term is left unweighted -- it is a
+    batch-level ranking statistic, not a per-sample error.
     """
-    def __init__(self, pearson_w=0.4):
+    def __init__(self, pearson_w=0.4, weight_fn=None):
         super().__init__()
         self.mse = nn.MSELoss()
         self.pearson_w = pearson_w
         self.mse_w = 1.0 - pearson_w
+        self.weight_fn = weight_fn
 
     def forward(self, preds: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
-        mse_loss = self.mse(preds, targets)
+        if self.weight_fn is not None:
+            w = self.weight_fn(targets)
+            mse_loss = (w * (preds - targets) ** 2).sum() / w.sum().clamp(min=1e-8)
+        else:
+            mse_loss = self.mse(preds, targets)
+        if self.pearson_w == 0.0:
+            return self.mse_w * mse_loss
         p = preds.squeeze() - preds.squeeze().mean()
         t = targets.squeeze() - targets.squeeze().mean()
-        r = (p * t).sum() / (p.norm() * t.norm() + 1e-8)
+        # clamp (not +eps) the denominator: on a low-variance batch the old
+        # 1e-8 epsilon still let the gradient of the Pearson term blow up,
+        # which is the likely cause of the periodic val-MAE spikes seen in
+        # the training curves. Clamping bounds the gradient magnitude while
+        # leaving normal batches (denominator >> 1e-4) untouched.
+        denom = (p.norm() * t.norm()).clamp(min=1e-4)
+        r = (p * t).sum() / denom
         return self.mse_w * mse_loss + self.pearson_w * (1.0 - r)
 
 
 # --------------------------------------------------------------------------- #
 # Train / evaluate                                                             #
 # --------------------------------------------------------------------------- #
-def run_epoch(model, loader, criterion, device, span, optimizer=None, grad_clip=0.0):
+def run_epoch(model, loader, criterion, device, span, optimizer=None, grad_clip=0.0,
+              aux_w=0.0):
     """span = (hi - lo): converts the scaled MAE back into native score units.
 
     Returns (loss, mse, mae):
@@ -266,16 +373,28 @@ def run_epoch(model, loader, criterion, device, span, optimizer=None, grad_clip=
         Logging this separately matters because when --loss=combined (the
         default), `loss` is NOT pure MSE -- conflating the two mislabels the
         training curves and corrupts MSE-based model selection.
+
+    Multi-task note: only the TRAINING loader yields (img, target, aux) batches;
+    the aux MSE (weighted by aux_w) is added to the optimised loss there. The
+    val / train-eval loaders yield (img, target) and the model's aux output is
+    ignored, so all LOGGED losses and metrics stay main-task-only and remain
+    comparable to runs without --aux.
     """
     train = optimizer is not None
     model.train(train)
     total_loss, total_sq_err, total_abs_err, n = 0.0, 0.0, 0.0, 0
     torch.set_grad_enabled(train)
-    for imgs, targets in loader:
+    for batch in loader:
+        imgs, targets = batch[0], batch[1]
+        aux_targets = batch[2] if len(batch) == 3 else None
         imgs = imgs.to(device, non_blocking=True)
         targets = targets.to(device, non_blocking=True)
-        preds = model(imgs)
+        out = model(imgs)
+        preds, aux_preds = out if isinstance(out, tuple) else (out, None)
         loss = criterion(preds, targets)
+        if aux_targets is not None and aux_preds is not None and aux_w > 0:
+            aux_targets = aux_targets.to(device, non_blocking=True)
+            loss = loss + aux_w * nn.functional.mse_loss(aux_preds, aux_targets)
         if train:
             optimizer.zero_grad()
             loss.backward()
@@ -425,7 +544,7 @@ def main():
     ap.add_argument("--augment", default="strong", choices=["none", "basic", "strong"],
                     help="train-time data augmentation strength")
     ap.add_argument("--patience", type=int, default=8,
-                    help="early-stop after this many epochs with no val-MAE gain (0=off)")
+                    help="early-stop after this many epochs with no val-MSE gain (0=off)")
     ap.add_argument("--img-size", type=int, default=224)
     ap.add_argument("--workers", type=int, default=8)
     ap.add_argument("--val-frac", type=float, default=0.1)
@@ -443,6 +562,23 @@ def main():
     ap.add_argument("--grad-clip", type=float, default=1.0,
                     help="gradient clipping max norm (0=off); prevents spikes "
                          "in early epochs")
+    ap.add_argument("--tail-weight", type=float, default=0.0,
+                    help="inverse-frequency label weighting power (0=off). "
+                         "0.5 = inverse-sqrt up-weighting of rare extreme "
+                         "scores; the fix for regression-to-the-mean at the "
+                         "tails. Applies to the MSE term of 'mse'/'combined' "
+                         "losses (huber is left unweighted).")
+    ap.add_argument("--head", default="sigmoid", choices=["sigmoid", "linear"],
+                    help="output activation: sigmoid bounds [0,1] but "
+                         "saturates at the extremes; linear removes that "
+                         "saturation (evaluate.py clamps at inference)")
+    ap.add_argument("--aux", type=int, default=0,
+                    help="multi-task: also predict the K OFIQ .native component "
+                         "measures most correlated with the target (0=off). "
+                         "Teaches the backbone WHY an image is low quality.")
+    ap.add_argument("--aux-weight", type=float, default=0.3,
+                    help="weight of the auxiliary component-prediction MSE "
+                         "added to the main loss during training")
     args = ap.parse_args()
 
     head_drop = None if args.head_drop < 0 else args.head_drop
@@ -459,7 +595,15 @@ def main():
     if args.target not in df.columns:
         avail = [c for c in df.columns if c.endswith(".native") or c.endswith(".scalar")][:6]
         raise SystemExit(f"target column '{args.target}' not in CSV. Available e.g.: {avail} ...")
-    df = df[["Filename", args.target]].dropna()
+    # keep the aux candidate columns too when multi-task is on
+    aux_candidates = []
+    if args.aux > 0:
+        aux_candidates = [c for c in df.columns
+                          if c.endswith(".native") and c != args.target]
+    df = df[["Filename", args.target] + aux_candidates].dropna(
+        subset=["Filename", args.target])
+    for c in aux_candidates:  # aux NaNs (rare) get the column median, rows kept
+        df[c] = df[c].fillna(df[c].median())
     exists = df["Filename"].apply(
         lambda p: os.path.exists(p if os.path.isabs(p) else os.path.join(args.root, p))
     )
@@ -484,6 +628,26 @@ def main():
     print(f"Target '{args.target}': train range [{y_min:.3f}, {y_max:.3f}] "
           f"-> scaled with (lo={lo:.3f}, hi={hi:.3f}); MAE reported in native units.",
           flush=True)
+
+    # ---- multi-task: pick the K components most correlated with the target -- #
+    # Selection and per-column scaling both use the TRAIN split only.
+    aux_cols, aux_lo, aux_hi = [], None, None
+    if args.aux > 0:
+        yt = train_df[args.target].astype("float64")
+        corrs = {}
+        for c in aux_candidates:
+            v = train_df[c].astype("float64")
+            if v.std() > 0:
+                corrs[c] = abs(v.corr(yt))
+        aux_cols = sorted(corrs, key=corrs.get, reverse=True)[:args.aux]
+        a = train_df[aux_cols].astype("float32").to_numpy()
+        a_min, a_max = a.min(axis=0), a.max(axis=0)
+        a_margin = 0.05 * (a_max - a_min)
+        aux_lo, aux_hi = a_min - a_margin, a_max + a_margin
+        aux_hi = np.where(aux_hi - aux_lo < 1e-6, aux_lo + 1.0, aux_hi)  # constant-col guard
+        print(f"Multi-task aux targets ({len(aux_cols)}, weight {args.aux_weight}):", flush=True)
+        for c in aux_cols:
+            print(f"  |corr|={corrs[c]:.3f}  {c}", flush=True)
 
     # Save the exact validation filenames next to the model, so evaluate.py can
     # score the model on precisely the images it never trained on (no leakage).
@@ -520,7 +684,11 @@ def main():
         norm,
     ])
 
-    train_ds = FFHQQualityDataset(train_df, args.root, args.target, train_tf, lo, hi)
+    # only the TRAINING dataset carries the aux targets: the aux head is a
+    # training-time regulariser, and keeping val main-only means the logged
+    # val loss / early stopping stay comparable to runs without --aux.
+    train_ds = FFHQQualityDataset(train_df, args.root, args.target, train_tf, lo, hi,
+                                  aux_cols=aux_cols, aux_lo=aux_lo, aux_hi=aux_hi)
     val_ds = FFHQQualityDataset(val_df, args.root, args.target, eval_tf, lo, hi)
     # Same training images, but no augmentation and (via run_epoch's optimizer=None)
     # no dropout -- lets the logged train_mse/train_mae be measured the same way as
@@ -535,20 +703,30 @@ def main():
                                    num_workers=args.workers, pin_memory=True)
 
     # ---- model ------------------------------------------------------------- #
-    model = build_model(args.arch, head_drop=head_drop).to(device)
+    model = build_model(args.arch, head_drop=head_drop, head_act=args.head,
+                        n_aux=len(aux_cols)).to(device)
     n_params = sum(p.numel() for p in model.parameters())
     print(f"Model: {args.arch} | parameters: {n_params/1e6:.2f}M", flush=True)
     if torch.cuda.device_count() > 1:
         print(f"Using DataParallel across {torch.cuda.device_count()} GPUs", flush=True)
         model = nn.DataParallel(model)
 
+    # optional tail weighting: computed from TRAIN scaled targets only
+    weight_fn = None
+    if args.tail_weight > 0:
+        weight_fn = make_tail_weight_fn(np.asarray(train_ds.targets, dtype=np.float32),
+                                        power=args.tail_weight)
+        print(f"Tail weighting ON: inverse-frequency power {args.tail_weight}", flush=True)
+
     if args.loss == "mse":
-        criterion = nn.MSELoss()
+        # weighted MSE = CombinedLoss with the Pearson term switched off
+        criterion = CombinedLoss(pearson_w=0.0, weight_fn=weight_fn) if weight_fn \
+            else nn.MSELoss()
     elif args.loss == "huber":
         criterion = nn.SmoothL1Loss()
     else:  # combined: MSE + Pearson correlation (default)
-        criterion = CombinedLoss(pearson_w=0.4)
-    print(f"Loss: {args.loss} | grad_clip: {args.grad_clip}", flush=True)
+        criterion = CombinedLoss(pearson_w=0.4, weight_fn=weight_fn)
+    print(f"Loss: {args.loss} | grad_clip: {args.grad_clip} | head: {args.head}", flush=True)
 
     # AdamW = Adam with proper (decoupled) weight decay -> the L2 regularisation
     # your professor asked for. Adam still adapts the per-parameter learning rate.
@@ -571,7 +749,7 @@ def main():
         # (dropout + augmentation both inflate the error), so logging them was
         # what made the train/val curves look backwards.
         run_epoch(model, train_loader, criterion, device, span, optimizer,
-                  grad_clip=args.grad_clip)
+                  grad_clip=args.grad_clip, aux_w=args.aux_weight if aux_cols else 0.0)
         # dropout off, unaugmented: this is what gets logged, so train and val
         # are measured the same way and are actually comparable epoch to epoch.
         tr_loss, tr_mse, tr_mae = run_epoch(model, train_eval_loader, criterion, device, span, None)
@@ -603,7 +781,9 @@ def main():
     state = model.module.state_dict() if hasattr(model, "module") else model.state_dict()
     torch.save({"model_state": state, "arch": args.arch, "target": args.target,
                 "img_size": args.img_size, "val_mse": va_mse, "val_mae": va_mae,
-                "epoch": epoch, "target_lo": lo, "target_hi": hi, "head_drop": head_drop},
+                "epoch": epoch, "target_lo": lo, "target_hi": hi, "head_drop": head_drop,
+                "head_act": args.head, "tail_weight": args.tail_weight,
+                "aux_cols": aux_cols, "aux_weight": args.aux_weight if aux_cols else 0.0},
                args.out)
     print(f"Saved final-epoch checkpoint -> {args.out} (epoch {epoch}, val MSE {va_mse:.5f}, "
           f"val MAE {va_mae:.2f} in native units)", flush=True)

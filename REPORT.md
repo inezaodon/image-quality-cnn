@@ -48,7 +48,7 @@ OFIQ produces two versions of the score:
 - `.scalar` — a non-linear (squashed) remapping of the raw score onto a fixed 0–100 range. The squashing distorts the values and makes regression harder.
 - `.native` — the raw, linear score that OFIQ actually computes internally. Training on this keeps the target undistorted, which makes the model's errors directly interpretable and produces better results.
 
-**The 7,000 test images were held out completely** — the model never saw them during training, not even for early stopping decisions. Their filenames were saved to `best_model_full.val_files.txt` to guarantee clean, leakage-free evaluation.
+**The 7,000 validation images were never used for gradient updates** — the model never trained on them. They *were* used as the model-selection signal: validation MSE drives early stopping and the learning-rate scheduler each epoch, which is standard practice and does not leak pixels or labels into the weights. Their filenames were saved to `best_model_full.val_files.txt` so evaluation always runs on exactly the images the model never trained on.
 
 ---
 
@@ -99,7 +99,7 @@ Input image: 224 × 224 × 3 (RGB)
   Output: predicted quality score (single number)
 ```
 
-**Parameter count: ~0.5 million** — compared to ResNet18's 11 million. This is the key reason overfitting is prevented: a smaller model has less capacity to memorise the training set.
+**Parameter count: ~0.33 million** (0.33M printed at runtime) — compared to ResNet18's 11 million. This is the key reason overfitting is prevented: a smaller model has less capacity to memorise the training set.
 
 ### What is a Residual Block?
 
@@ -119,7 +119,7 @@ Each residual block in SmallResNet contains:
 Overfitting means the model learns to memorise the training data instead of learning general patterns — it performs well on training images but poorly on new images. The professor specifically asked for techniques to prevent this. All of the following were implemented.
 
 ### 4.1 Small Model Capacity
-**What:** Used SmallResNet (~0.5M params) instead of ResNet18 (~11M params).
+**What:** Used SmallResNet (~0.33M params) instead of ResNet18 (~11M params).
 **Why it helps:** A model with less capacity simply cannot memorise 63,000 training images. It is forced to learn general features.
 
 ### 4.2 Spatial Dropout (Dropout2d) — Professor specifically recommended this
@@ -166,9 +166,9 @@ loss = 0.6 × MSE(predictions, targets)
 ```
 
 ### 4.8 Early Stopping
-**What:** Training monitors the validation MAE after each epoch. If it does not improve for 8 consecutive epochs, training stops automatically.
+**What:** Training monitors the validation MSE after each epoch (MSE, not MAE — it is the smoother of the two metrics epoch-to-epoch). If it does not improve for 8 consecutive epochs, training stops automatically.
 **Why it helps:** Without early stopping, a model can continue training past its best point, causing validation performance to worsen even as training performance keeps improving. This "over-training" is itself a form of overfitting.
-**Result:** Training ran the full 40 requested epochs without triggering (val MSE never went a full 8-epoch patience window without a new low). Note that "best validation MAE epoch" and "saved checkpoint" are no longer the same thing — see Update Log for the checkpoint-selection change.
+**Result:** Training ran the full 40 requested epochs without triggering (val MSE never went a full 8-epoch patience window without a new low). Note that "best validation MSE epoch" and "saved checkpoint" are no longer the same thing — see Update Log for the checkpoint-selection change.
 
 ### 4.9 Gradient Clipping
 **What:** During each training step, if any gradient value exceeds a maximum norm of 1.0, all gradients are scaled down proportionally.
@@ -227,7 +227,7 @@ These numbers were produced by running `evaluate.py` on the 7,000 images the mod
 | **Baseline MAE** | 2.68 | If you always guessed the average score, you'd be off by 2.68 — the model is **2× better than this baseline** |
 | **RMSE** | 1.67 | Root Mean Squared Error — similar to MAE but penalises large errors more heavily |
 | **Pearson r** | **0.866** | Strong linear correlation between predictions and true scores. 1.0 would be perfect. |
-| **Spearman rho** | **0.867** | The model ranks images in the correct quality order 86.7% of the time. This is the key metric for a quality model. |
+| **Spearman rho** | **0.867** | Strong monotonic agreement between the model's quality ranking and OFIQ's (1.0 = identical ordering; 0 = no relationship). This is a rank correlation coefficient, not a percentage of correct rankings. It is the key metric for a quality model. |
 | **R²** | **0.738** | The model explains 73.8% of the variance in quality scores across the test set. |
 
 These numbers come from `best_model_full.pt` at epoch 40, the final version of the model after both the checkpoint-selection and clean-logging changes described in the Update Log. They are effectively unchanged from every earlier checkpoint in this project (MAE has stayed in the 1.32–1.33 range throughout) — none of this session's changes were about model quality, only about correctly measuring and reporting it.
@@ -289,7 +289,7 @@ Yes. The key evidence:
 2. **Strong correlation** — Pearson r = 0.866, Spearman rho = 0.867. The model reliably identifies image quality differences.
 
 3. **All professor recommendations implemented:**
-   - ✅ Smallest possible ResNet (0.5M params, built from scratch)
+   - ✅ Smallest possible ResNet (0.33M params, built from scratch)
    - ✅ Spatial dropout in every conv block
    - ✅ L2 regularisation via AdamW weight decay
    - ✅ Trained on `UnifiedQualityScore.native` (raw linear score)

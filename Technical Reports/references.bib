@@ -1,0 +1,141 @@
+% Face image quality CNN technical report — core datasets and standards
+
+@inproceedings{karras2019stylegan,
+  author    = {Karras, Tero and Laine, Samuli and Aila, Timo},
+  title     = {A Style-Based Generator Architecture for Generative Adversarial Networks},
+  booktitle = {Proceedings of the {IEEE/CVF} Conference on Computer Vision and Pattern Recognition ({CVPR})},
+  year      = {2019},
+  pages     = {4401--4410},
+  note      = {Introduces the {FFHQ} (Flickr-Faces-HQ) dataset of 70{,}000 high-quality face images at $1024 \times 1024$ resolution}
+}
+
+@techreport{bsi2024ofiq,
+  author      = {{Federal Office for Information Security (BSI)}},
+  title       = {Open Source Face Image Quality ({OFIQ}), Algorithm Book {V1.2}},
+  institution = {Federal Office for Information Security (BSI)},
+  year        = {2024},
+  url         = {https://www.bsi.bund.de/OFIQ},
+  note        = {Reference implementation for {ISO/IEC} 29794-5 face image quality assessment}
+}
+
+@misc{iso29794_5_2025,
+  author    = {{ISO/IEC}},
+  title     = {{ISO/IEC} 29794-5:2025 Information technology --- Biometric sample quality --- Part 5: Face image data},
+  year      = {2025},
+  publisher = {International Organization for Standardization},
+  note      = {International standard defining unified face image quality scores and quality components assessed by {OFIQ}}
+}
+
+@misc{bsiOfiqShortReport2024,
+  author       = {{Federal Office for Information Security (BSI)}},
+  title        = {Open Source Face Image Quality ({OFIQ}) --- Short Report},
+  year         = {2024},
+  howpublished = {online},
+  url          = {https://www.bsi.bund.de/SharedDocs/Downloads/EN/BSI/OFIQ/OFIQ_1_0_short_report.html},
+  note         = {Summarises {OFIQ} development as the reference implementation of {ISO/IEC} 29794-5}
+}
+
+% Convolutional architectures and training
+
+@inproceedings{he2016resnet,
+  author    = {He, Kaiming and Zhang, Xiangyu and Ren, Shaoqing and Sun, Jian},
+  title     = {Deep Residual Learning for Image Recognition},
+  booktitle = {Proceedings of the {IEEE} Conference on Computer Vision and Pattern Recognition ({CVPR})},
+  year      = {2016},
+  pages     = {770--778}
+}
+
+@inproceedings{hu2018senet,
+  author    = {Hu, Jie and Shen, Li and Sun, Gang},
+  title     = {Squeeze-and-Excitation Networks},
+  booktitle = {Proceedings of the {IEEE} Conference on Computer Vision and Pattern Recognition ({CVPR})},
+  year      = {2018},
+  pages     = {7132--7141}
+}
+
+@inproceedings{loshchilov2019adamw,
+  author    = {Loshchilov, Ilya and Hutter, Frank},
+  title     = {Decoupled Weight Decay Regularization},
+  booktitle = {International Conference on Learning Representations ({ICLR})},
+  year      = {2019}
+}
+
+@article{srivastava2014dropout,
+  author  = {Srivastava, Nitish and Hinton, Geoffrey and Krizhevsky, Alex and Sutskever, Ilya and Salakhutdinov, Ruslan},
+  title   = {Dropout: A Simple Way to Prevent Neural Networks from Overfitting},
+  journal = {Journal of Machine Learning Research},
+  volume  = {15},
+  number  = {56},
+  pages   = {1929--1958},
+  year    = {2014}
+}
+
+@inproceedings{tompson2015spatialDropout,
+  author    = {Tompson, Jonathan and Goroshin, Ross and Jain, Arjun and LeCun, Yann and Bregler, Christoph},
+  title     = {Efficient Object Localization Using Convolutional Networks},
+  booktitle = {Proceedings of the {IEEE} Conference on Computer Vision and Pattern Recognition ({CVPR})},
+  year      = {2015},
+  pages     = {648--656},
+  note      = {Introduces spatial dropout for convolutional feature maps}
+}
+
+% Evaluation metrics and generative modelling
+
+@article{pearson1896correlation,
+  author  = {Pearson, Karl},
+  title   = {Mathematical Contributions to the Theory of Evolution. {III}. Regression, Heredity, and Panmixia},
+  journal = {Philosophical Transactions of the Royal Society of London. Series A},
+  volume  = {187},
+  pages   = {253--318},
+  year    = {1896},
+  note    = {Foundational work on the product-moment correlation coefficient}
+}
+
+@article{spearman1904correlation,
+  author  = {Spearman, Charles},
+  title   = {The Proof and Measurement of Association between Two Things},
+  journal = {The American Journal of Psychology},
+  volume  = {15},
+  number  = {1},
+  pages   = {72--101},
+  year    = {1904},
+  note    = {Introduces rank-order (Spearman) correlation for monotonic association}
+}
+
+@techreport{nistIr8485FateSidd,
+  author      = {Grother, Patrick and Quinn, George and Hanaoka, Kayee},
+  title       = {Face Image Quality in NIST Face Recognition Technology Evaluation ({FRTE})},
+  institution = {National Institute of Standards and Technology},
+  number      = {NIST {IR} 8485},
+  year        = {2023},
+  url         = {https://pages.nist.gov/frvt/reports/quality/frvt_quality.pdf},
+  note        = {NIST {FATE} {SIDD} face image quality assessment campaign; evaluates correlation of quality scores with recognition performance}
+}
+
+@inproceedings{goodfellow2014gan,
+  author    = {Goodfellow, Ian and Pouget-Abadie, Jean and Mirza, Mehdi and Xu, Bing and Warde-Farley, David and Ozair, Sherjil and Courville, Aaron and Bengio, Yoshua},
+  title     = {Generative Adversarial Nets},
+  booktitle = {Advances in Neural Information Processing Systems ({NeurIPS})},
+  year      = {2014},
+  pages     = {2672--2680}
+}
+
+% Pretrained backbone context
+
+@inproceedings{deng2009imagenet,
+  author    = {Deng, Jia and Dong, Wei and Socher, Richard and Li, Li-Jia and Li, Kai and Fei-Fei, Li},
+  title     = {{ImageNet}: A Large-Scale Hierarchical Image Database},
+  booktitle = {Proceedings of the {IEEE} Conference on Computer Vision and Pattern Recognition ({CVPR})},
+  year      = {2009},
+  pages     = {248--255},
+  note      = {Source dataset for widely used pretrained {CNN} backbones}
+}
+
+@inproceedings{paszke2019pytorch,
+  author    = {Paszke, Adam and Gross, Sam and Massa, Francesco and Lerer, Adam and Bradbury, James and Chanan, Gregory and Killeen, Trevor and Lin, Zeming and Gimelshein, Natalia and Antiga, Luca and Desmaison, Alban and K{\"o}pf, Andreas and Yang, Edward and DeVito, Zachary and Raison, Martin and Tejani, Alykhan and Chilamkurthy, Sasank and Steiner, Benoit and Fang, Lu and Bai, Junjie and Chintala, Soumith},
+  title     = {{PyTorch}: An Imperative Style, High-Performance Deep Learning Library},
+  booktitle = {Advances in Neural Information Processing Systems ({NeurIPS})},
+  year      = {2019},
+  pages     = {8024--8035},
+  note      = {{PyTorch} and {torchvision} provide pretrained {ImageNet} weights used for transfer learning}
+}

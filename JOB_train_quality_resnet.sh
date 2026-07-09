@@ -11,7 +11,7 @@ module load pytorch/2.9.1
 nvidia-smi --query-gpu=index,name,memory.total --format=csv
 
 # SmallResNet trained from scratch on the current partial OFIQ output.
-# resnet_small (~0.5M params, spatial dropout) instead of resnet18 (~11M)
+# resnet_small (~0.33M params, spatial dropout) instead of resnet18 (~11M)
 # to reduce overfitting.  No pretrained weights -> lr 1e-3 is fine.
 python train_quality.py \
     --csv ffhq_all_results.csv \

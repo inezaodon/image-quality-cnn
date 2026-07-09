@@ -18,6 +18,16 @@ It also prints a handful of example predictions so you can eyeball them, and
 side by side, a tight train cloud next to a loose val cloud is overfitting you
 can literally see.
 
+By default it also writes per-image predictions to <model>_val_preds.csv
+(Filename, true, pred) so downstream diagnostics (binned residuals,
+calibration curve, component-correlation figures) can be built without
+re-running the model.
+
+--calibrate fits an isotonic (monotone) correction on HALF the val set and
+reports before/after metrics on the OTHER half — a post-hoc fix for the
+regression-to-the-mean compression at the score extremes that never fits and
+scores on the same images.
+
 Usage:
     module load pytorch/2.9.1
     python evaluate.py --model best_model.pt --plot eval_scatter.png
@@ -45,13 +55,46 @@ def run_model(model, df, root, target_col, tf, lo, hi, device, batch_size, worke
     preds, trues = [], []
     with torch.no_grad():
         for imgs, targets in loader:
-            out = model(imgs.to(device)).cpu().numpy().ravel()
+            out = model(imgs.to(device))
+            if isinstance(out, tuple):  # multi-task checkpoint: (main, aux)
+                out = out[0]
+            out = out.cpu().numpy().ravel()
             preds.append(out)
             trues.append(targets.numpy().ravel())
+    # clamp to the valid scaled range: a no-op for sigmoid heads, and the
+    # documented inference contract for linear heads (--head linear).
+    preds = np.clip(np.concatenate(preds), 0.0, 1.0)
     # undo the [0,1] scaling -> back to the target's native units
-    preds = np.concatenate(preds) * span + lo
+    preds = preds * span + lo
     trues = np.concatenate(trues) * span + lo
     return preds, trues
+
+
+# --------------------------------------------------------------------------- #
+# Isotonic regression via Pool-Adjacent-Violators (pure numpy, no sklearn).    #
+# Learns the best MONOTONE map pred -> true, i.e. it can stretch the           #
+# compressed tails back out without ever breaking the model's ranking.         #
+# --------------------------------------------------------------------------- #
+def isotonic_fit(preds, trues):
+    """Return (xs, fitted): a monotone calibration curve sampled at xs."""
+    order = np.argsort(preds)
+    xs = preds[order].astype(float)
+    ys = trues[order].astype(float)
+    vals, wts, cnts = [], [], []
+    for v in ys:
+        vals.append(v); wts.append(1.0); cnts.append(1)
+        # pool adjacent blocks while they violate monotonicity
+        while len(vals) > 1 and vals[-2] > vals[-1]:
+            v2, w2, c2 = vals.pop(), wts.pop(), cnts.pop()
+            v1, w1, c1 = vals.pop(), wts.pop(), cnts.pop()
+            w = w1 + w2
+            vals.append((v1 * w1 + v2 * w2) / w); wts.append(w); cnts.append(c1 + c2)
+    fitted = np.repeat(vals, cnts)
+    return xs, fitted
+
+
+def isotonic_apply(xs, fitted, preds_new):
+    return np.interp(preds_new, xs, fitted)
 
 
 def metrics(preds, trues):
@@ -101,6 +144,12 @@ def main():
                     help="path for the TRAINING-set scatter PNG; 'auto' = <plot>_train.png, ''=skip")
     ap.add_argument("--train-sample", type=int, default=7000,
                     help="how many training images to score for the train scatter (speed cap)")
+    ap.add_argument("--save-preds", default="auto",
+                    help="CSV path for per-image val predictions; "
+                         "'auto' = <model>_val_preds.csv, '' = skip")
+    ap.add_argument("--calibrate", action="store_true",
+                    help="fit isotonic calibration on half the val set, report "
+                         "before/after metrics on the other half")
     args = ap.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -149,7 +198,9 @@ def main():
     tf = transforms.Compose([transforms.Resize((img_size, img_size)),
                              transforms.ToTensor(), norm])
 
-    model = build_model(arch, head_drop=ckpt.get("head_drop")).to(device)
+    model = build_model(arch, head_drop=ckpt.get("head_drop"),
+                        head_act=ckpt.get("head_act", "sigmoid"),
+                        n_aux=len(ckpt.get("aux_cols") or [])).to(device)
     model.load_state_dict(ckpt["model_state"])
     model.eval()
 
@@ -175,6 +226,29 @@ def main():
     for i in show:
         print(f"{val_df['Filename'].iloc[i]:<28}{trues[i]:>8.1f}{preds[i]:>8.1f}{preds[i]-trues[i]:>+8.1f}")
 
+    # ---- save per-image predictions (feeds the diagnostic figures) ------- #
+    save_preds = args.save_preds
+    if save_preds == "auto":
+        save_preds = os.path.splitext(args.model)[0] + "_val_preds.csv"
+    if save_preds:
+        pd.DataFrame({"Filename": val_df["Filename"], "true": trues, "pred": preds}) \
+            .to_csv(save_preds, index=False)
+        print(f"Per-image val predictions saved -> {save_preds}", flush=True)
+
+    # ---- optional isotonic calibration (fit half A, score half B) -------- #
+    if args.calibrate:
+        rng = np.random.RandomState(0)
+        half = rng.permutation(len(preds)) < len(preds) // 2
+        xs, fitted = isotonic_fit(preds[half], trues[half])
+        cal_preds = isotonic_apply(xs, fitted, preds[~half])
+        m_raw = metrics(preds[~half], trues[~half])
+        m_cal = metrics(cal_preds, trues[~half])
+        print("\n---- ISOTONIC CALIBRATION (fit on half A, scored on half B) ----")
+        print(f"  {'':14}{'raw':>10}{'calibrated':>12}")
+        for k in ("mae", "rmse", "pearson", "spearman", "r2"):
+            print(f"  {k:<14}{m_raw[k]:>10.3f}{m_cal[k]:>12.3f}")
+        print("  (calibration is monotone: Spearman rho is preserved by design)")
+
     # ---- validation scatter --------------------------------------------- #
     ckpt_epoch = ckpt.get("epoch", "?")
     if args.plot:
@@ -196,6 +270,11 @@ def main():
               f"(big gap => overfitting)")
         print(f"  train r   {tm['pearson']:.3f}  vs  val r   {m['pearson']:.3f}")
         scatter(tt, tp, tm, train_plot, f"Training set (model has seen these) — checkpoint epoch {ckpt_epoch}")
+        if save_preds:
+            train_preds_path = os.path.splitext(args.model)[0] + "_train_preds.csv"
+            pd.DataFrame({"Filename": sample["Filename"], "true": tt, "pred": tp}) \
+                .to_csv(train_preds_path, index=False)
+            print(f"Per-image train predictions saved -> {train_preds_path}", flush=True)
 
 
 if __name__ == "__main__":
