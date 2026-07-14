@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Face Image Quality — CNN Demo</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet">
+</head>
+<body>
+  <header class="hero">
+    <div class="hero-inner">
+      <p class="eyebrow">OFIQ Unified Quality · SmallResNet CNN</p>
+      <h1>Face Image Quality Scorer</h1>
+      <p class="lead">
+        Upload a face photo and get an instant <strong>UnifiedQualityScore</strong>
+        prediction — the same biometric quality metric OFIQ computes, approximated
+        by a compact neural network trained on 70,000 FFHQ images.
+      </p>
+    </div>
+  </header>
+
+  <main class="container">
+    <section class="card upload-section" aria-labelledby="upload-heading">
+      <h2 id="upload-heading">Score an image</h2>
+      <p class="section-intro">
+        The model was trained on <strong>tightly cropped FFHQ face portraits</strong>
+        (256×256). For phone or web photos we detect the face and crop it first —
+        without that crop, even sharp portraits score artificially low because the
+        network “sees” mostly background.
+      </p>
+
+      <form id="upload-form" class="upload-form">
+        <label class="dropzone" id="dropzone" for="image-input">
+          <input type="file" id="image-input" name="image" accept="image/*" hidden>
+          <div class="dropzone-content" id="dropzone-placeholder">
+            <span class="dropzone-icon">↑</span>
+            <span class="dropzone-text">Drop a face image here or click to browse</span>
+            <span class="dropzone-hint">PNG, JPG, WEBP · max 16 MB</span>
+          </div>
+          <img id="preview" class="preview hidden" alt="Uploaded preview">
+        </label>
+        <button type="submit" class="btn primary" id="submit-btn" disabled>Analyse quality</button>
+      </form>
+      <p id="error" class="error hidden" role="alert"></p>
+    </section>
+
+    <section id="results" class="card results-section hidden" aria-live="polite">
+      <h2>Your quality score</h2>
+      <div class="results-grid">
+        <div class="score-panel">
+          <div class="score-value" id="score-value">—</div>
+          <div class="score-unit">native OFIQ units</div>
+          <div class="band-badge" id="band-badge">—</div>
+          <p class="band-summary" id="band-summary"></p>
+
+          <figure class="crop-preview-wrap">
+            <img id="crop-preview" class="crop-preview" alt="Face crop sent to the model">
+            <figcaption id="crop-note" class="crop-note"></figcaption>
+          </figure>
+
+          <div class="gauge-wrap">
+            <div class="gauge-labels">
+              <span id="gauge-lo">11</span>
+              <span>Score range on training data</span>
+              <span id="gauge-hi">33</span>
+            </div>
+            <div class="gauge-track">
+              <div class="gauge-fill" id="gauge-fill"></div>
+              <div class="gauge-marker" id="gauge-marker"></div>
+            </div>
+            <p class="gauge-caption" id="gauge-caption"></p>
+          </div>
+        </div>
+
+        <div class="interpretation-panel">
+          <h3>What this score means</h3>
+          <p id="band-detail"></p>
+
+          <div class="info-box">
+            <h4>How to read the number</h4>
+            <ul>
+              <li><strong>Higher = better biometric quality</strong> — sharpness, pose, lighting, occlusion — not beauty or “good photo” vibes.</li>
+              <li><strong>Most faces score ~20–26.</strong> That is normal, not failure. Scores above ~28 are uncommon even on FFHQ. Above 30 is rare (~1% of labels).</li>
+              <li><strong>Scale is ~11–33 native units</strong>, not 0–100. A 22 is mid-pack; an 18 is below average; a 15 is poor.</li>
+              <li><strong>Approximate, not exact OFIQ.</strong> Average error is about ±<span id="mae-value">1.32</span> on held-out FFHQ (Pearson <em>r</em> ≈ 0.87). Extremes regress toward the mean.</li>
+              <li><strong>Crop matters.</strong> The network was trained on face crops. We show the crop we scored below — if it’s wrong, the score will be wrong.</li>
+            </ul>
+          </div>
+
+          <div class="bands-legend">
+            <h4>Quality bands (heuristic)</h4>
+            <table>
+              <thead>
+                <tr><th>Score</th><th>Band</th><th>Typical meaning</th></tr>
+              </thead>
+              <tbody>
+                <tr><td>&lt; 16</td><td>Very low</td><td>Serious usability issues</td></tr>
+                <tr><td>16 – 20</td><td>Below average</td><td>Moderate limitations</td></tr>
+                <tr><td>20 – 26</td><td>Average</td><td>Typical, generally usable</td></tr>
+                <tr><td>26 – 29</td><td>Above average</td><td>Good biometric quality</td></tr>
+                <tr><td>&gt; 29</td><td>High</td><td>Among the best in dataset</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="card about-section" aria-labelledby="about-heading">
+      <h2 id="about-heading">About this project</h2>
+      <div class="about-grid">
+        <div>
+          <h3>The problem</h3>
+          <p>
+            <a href="https://www.bsi.bund.de/OFIQ" target="_blank" rel="noopener">OFIQ</a>
+            (Open Source Face Image Quality) measures how suitable a face image is for
+            biometric matching — combining sharpness, head pose, illumination, exposure,
+            and occlusion into a single <code>UnifiedQualityScore</code>. It is accurate
+            but slow (seconds per image).
+          </p>
+          <p>
+            This project trains a lightweight <strong>SmallResNet</strong> CNN (~0.33M
+            parameters) to predict that score from pixels alone, achieving millisecond
+            inference while keeping strong correlation with OFIQ on 7,000 held-out test faces
+            (MAE 1.32, Spearman ρ 0.87).
+          </p>
+        </div>
+        <div>
+          <h3>Why it matters</h3>
+          <p>
+            Fast, differentiable quality estimation enables large-scale filtering of face
+            datasets and could serve as a critic inside generative face pipelines — pushing
+            synthetic images toward higher biometric usability without running full OFIQ on
+            every sample.
+          </p>
+          <p>
+            The model was trained on 70,000 FFHQ portraits with OFIQ labels, using heavy
+            regularization (spatial dropout, SE attention, combined MSE+Pearson loss) to
+            avoid the catastrophic overfitting seen with off-the-shelf ResNet18.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <section class="card reports-section" aria-labelledby="reports-heading">
+      <h2 id="reports-heading">Technical reports &amp; documentation</h2>
+      <p class="section-intro">
+        Full methodology, evaluation metrics, architecture details, and known limitations
+        are documented in the project reports below.
+      </p>
+      <div class="report-links">
+        <a class="report-card" href="{{ report_links.project_report_md }}" target="_blank" rel="noopener">
+          <span class="report-type">Markdown</span>
+          <strong>Project Report</strong>
+          <span>REPORT.md — dataset, architecture, training results, evaluation metrics</span>
+        </a>
+        <a class="report-card" href="{{ report_links.tech_report_pdf }}" target="_blank" rel="noopener">
+          <span class="report-type">PDF</span>
+          <strong>Technical Report</strong>
+          <span>Full academic write-up with figures, references, and methodology</span>
+        </a>
+        <a class="report-card" href="{{ report_links.fixes_pdf }}" target="_blank" rel="noopener">
+          <span class="report-type">PDF</span>
+          <strong>Problems &amp; Fixes</strong>
+          <span>Known issues (regression to mean, training spikes) and how they were addressed</span>
+        </a>
+        <a class="report-card" href="{{ report_links.fixes_md }}" target="_blank" rel="noopener">
+          <span class="report-type">Markdown</span>
+          <strong>Fixes (source)</strong>
+          <span>Technical Reports/fixes/FIXES.md — same content as the fixes PDF</span>
+        </a>
+        <a class="report-card" href="{{ report_links.graph_explanation }}" target="_blank" rel="noopener">
+          <span class="report-type">Guide</span>
+          <strong>Understanding the graphs</strong>
+          <span>Why training curves and scatter plots show different numbers</span>
+        </a>
+        <a class="report-card" href="{{ github_repo }}" target="_blank" rel="noopener">
+          <span class="report-type">GitHub</span>
+          <strong>Source code</strong>
+          <span>Training code, model weights, and evaluation scripts</span>
+        </a>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <p>
+      Checkpoint: <code>best_model_full.pt</code> (SmallResNet, epoch <span id="footer-epoch">40</span>)
+      · Trained on <code>UnifiedQualityScore.native</code>
+    </p>
+  </footer>
+
+  <script>
+    const form = document.getElementById('upload-form');
+    const input = document.getElementById('image-input');
+    const preview = document.getElementById('preview');
+    const placeholder = document.getElementById('dropzone-placeholder');
+    const submitBtn = document.getElementById('submit-btn');
+    const results = document.getElementById('results');
+    const errorEl = document.getElementById('error');
+    const dropzone = document.getElementById('dropzone');
+
+    let selectedFile = null;
+
+    function showError(msg) {
+      errorEl.textContent = msg;
+      errorEl.classList.remove('hidden');
+    }
+
+    function clearError() {
+      errorEl.classList.add('hidden');
+    }
+
+    function setPreview(file) {
+      selectedFile = file;
+      const url = URL.createObjectURL(file);
+      preview.src = url;
+      preview.classList.remove('hidden');
+      placeholder.classList.add('hidden');
+      submitBtn.disabled = false;
+      clearError();
+    }
+
+    input.addEventListener('change', () => {
+      if (input.files[0]) setPreview(input.files[0]);
+    });
+
+    dropzone.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      dropzone.classList.add('dragover');
+    });
+    dropzone.addEventListener('dragleave', () => dropzone.classList.remove('dragover'));
+    dropzone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      dropzone.classList.remove('dragover');
+      const file = e.dataTransfer.files[0];
+      if (file && file.type.startsWith('image/')) setPreview(file);
+    });
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      if (!selectedFile) return;
+
+      submitBtn.disabled = true;
+      submitBtn.textContent = 'Analysing…';
+      clearError();
+
+      const body = new FormData();
+      body.append('image', selectedFile);
+
+      try {
+        const res = await fetch('/api/score', { method: 'POST', body });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Scoring failed');
+
+        document.getElementById('score-value').textContent = data.score.toFixed(2);
+        document.getElementById('band-badge').textContent = data.band;
+        document.getElementById('band-summary').textContent = data.band_summary;
+        document.getElementById('band-detail').textContent = data.band_detail;
+        document.getElementById('gauge-lo').textContent = data.lo.toFixed(1);
+        document.getElementById('gauge-hi').textContent = data.hi.toFixed(1);
+        document.getElementById('gauge-marker').style.left = data.percentile + '%';
+        document.getElementById('gauge-fill').style.width = data.percentile + '%';
+        document.getElementById('gauge-caption').textContent =
+          `This score sits at the ${data.percentile}th percentile of the model's training range (${data.lo.toFixed(1)}–${data.hi.toFixed(1)}). Most FFHQ faces land near the middle (~20–26).`;
+        document.getElementById('mae-value').textContent = data.mae.toFixed(2);
+        document.getElementById('footer-epoch').textContent = data.epoch;
+        document.getElementById('crop-preview').src = 'data:image/jpeg;base64,' + data.crop_preview_b64;
+        document.getElementById('crop-note').textContent = data.crop_note;
+
+        results.classList.remove('hidden');
+        results.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      } catch (err) {
+        showError(err.message);
+      } finally {
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Analyse quality';
+      }
+    });
+  </script>
+</body>
+</html>
