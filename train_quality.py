@@ -23,9 +23,9 @@ Anti-overfitting toolbox (all on by default, tune via flags):
   - spatial dropout (Dropout2d) inside the conv stack
   - SE (Squeeze-and-Excitation) channel attention in every conv block
   - weight decay (L2) via AdamW
-  - data augmentation (random crop / flip / colour jitter)
+  - data augmentation (flip / colour jitter / rotation; no cropping or
+    resizing -- images stay at their native 256x256)
   - a deliberately SMALL ResNet (resnet_small) as an alternative to resnet18
-  - early stopping on val MSE (the smoother metric; see the training loop)
   - gradient clipping (--grad-clip 1.0) to prevent training spikes
   - combined MSE + Pearson-correlation loss (--loss combined) to directly
     optimise the correlation metrics the evaluator measures
@@ -148,10 +148,10 @@ class SimpleCNN(nn.Module):
             )
 
         self.features = nn.Sequential(
-            block(3, 32),     # 224 -> 112
-            block(32, 64),    # 112 -> 56
-            block(64, 128),   # 56  -> 28
-            block(128, 256),  # 28  -> 14
+            block(3, 32),     # 256 -> 128
+            block(32, 64),    # 128 -> 64
+            block(64, 128),   # 64  -> 32
+            block(128, 256),  # 32  -> 16
             nn.AdaptiveAvgPool2d(1),  # -> 256 x 1 x 1
         )
         self.head = nn.Sequential(
@@ -222,15 +222,15 @@ class SmallResNet(nn.Module):
         super().__init__()
         w0, w1, w2, w3 = widths
         self.stem = nn.Sequential(
-            nn.Conv2d(3, w0, 3, stride=2, padding=1, bias=False),  # 224 -> 112
+            nn.Conv2d(3, w0, 3, stride=2, padding=1, bias=False),  # 256 -> 128
             nn.BatchNorm2d(w0),
             nn.ReLU(inplace=True),
-            nn.MaxPool2d(2),  # 112 -> 56
+            nn.MaxPool2d(2),  # 128 -> 64
         )
-        self.layer1 = BasicBlock(w0, w0, stride=1, drop=drop)  # 56
-        self.layer2 = BasicBlock(w0, w1, stride=2, drop=drop)  # 56 -> 28
-        self.layer3 = BasicBlock(w1, w2, stride=2, drop=drop)  # 28 -> 14
-        self.layer4 = BasicBlock(w2, w3, stride=2, drop=drop)  # 14 -> 7
+        self.layer1 = BasicBlock(w0, w0, stride=1, drop=drop)  # 64
+        self.layer2 = BasicBlock(w0, w1, stride=2, drop=drop)  # 64 -> 32
+        self.layer3 = BasicBlock(w1, w2, stride=2, drop=drop)  # 32 -> 16
+        self.layer4 = BasicBlock(w2, w3, stride=2, drop=drop)  # 16 -> 8
         self.pool = nn.AdaptiveAvgPool2d(1)
         self.head = nn.Sequential(
             nn.Flatten(),
@@ -411,7 +411,7 @@ def run_epoch(model, loader, criterion, device, span, optimizer=None, grad_clip=
     return total_loss / n, total_sq_err / n, total_abs_err / n
 
 
-def diagnose_overfitting(log_rows, span, requested_epochs=None, patience=None):
+def diagnose_overfitting(log_rows, span):
     """Inspect the per-epoch log and print concrete signs of overfitting.
 
     Shared logic with diagnose_overfitting.py so the same verdict appears both
@@ -443,9 +443,6 @@ def diagnose_overfitting(log_rows, span, requested_epochs=None, patience=None):
     diverging = bool(len(tail) > 3 and tail["val_mse"].iloc[-1] > tail["val_mse"].iloc[0])
 
     print("\n---------------- OVERFITTING DIAGNOSIS ----------------")
-    if requested_epochs and last_epoch < requested_epochs:
-        print(f"  epochs run        : {last_epoch}/{requested_epochs} requested "
-              f"-> stopped early (no val-MSE gain for {patience} epochs after epoch {best_epoch})")
     print(f"  best val MSE      : {best_val_mse:.5f} (val MAE {best_val_mae:.2f}) "
           f"at epoch {best_epoch}/{last_epoch}")
     print(f"  final train MAE   : {float(last['train_mae']):.2f}   "
@@ -459,7 +456,7 @@ def diagnose_overfitting(log_rows, span, requested_epochs=None, patience=None):
     if gap > 0.25 * span:
         flags.append("train MAE is far below val MAE -> classic train/val divergence")
     if wasted > 5:
-        flags.append(f"val peaked at epoch {best_epoch} but training ran {wasted} more epochs -> use early stopping")
+        flags.append(f"val peaked at epoch {best_epoch} but training ran {wasted} more epochs with no val gain")
     if diverging:
         flags.append("val loss trended UP after the best epoch -> over-training")
     if flags:
@@ -471,7 +468,7 @@ def diagnose_overfitting(log_rows, span, requested_epochs=None, patience=None):
     print("-------------------------------------------------------\n", flush=True)
 
 
-def plot_curves(log_rows, path, requested_epochs=None, patience=None):
+def plot_curves(log_rows, path):
     """Plot the TRAINING curves: train vs val MSE and MAE per epoch.
 
     The dashed vertical line marks the epoch with the lowest val MSE, shown
@@ -509,9 +506,6 @@ def plot_curves(log_rows, path, requested_epochs=None, patience=None):
 
     title = (f"Training curves — checkpoint saved = final epoch ({last_epoch}); "
              f"dashed line = lowest-val-MSE epoch ({best_epoch}), shown for reference only, not the saved epoch")
-    if requested_epochs and last_epoch < requested_epochs:
-        title += (f"\nRan {last_epoch}/{requested_epochs} requested epochs — stopped early: "
-                  f"no val-MSE improvement for {patience} epochs after epoch {best_epoch}.")
     note = (
         "Both curves are measured with dropout off and no augmentation, on their respective "
         "image sets, so they are directly comparable epoch to epoch."
@@ -543,9 +537,9 @@ def main():
                     help="override head dropout (>=0); -1 uses the arch default")
     ap.add_argument("--augment", default="strong", choices=["none", "basic", "strong"],
                     help="train-time data augmentation strength")
-    ap.add_argument("--patience", type=int, default=8,
-                    help="early-stop after this many epochs with no val-MSE gain (0=off)")
-    ap.add_argument("--img-size", type=int, default=224)
+    ap.add_argument("--img-size", type=int, default=256,
+                    help="input resolution; FFHQ images are native 256x256, so "
+                         "256 means no downscaling anywhere in the pipeline")
     ap.add_argument("--workers", type=int, default=8)
     ap.add_argument("--val-frac", type=float, default=0.1)
     ap.add_argument("--seed", type=int, default=42)
@@ -664,29 +658,26 @@ def main():
     aug = []
     if args.augment == "strong":
         aug = [
-            transforms.RandomResizedCrop(args.img_size, scale=(0.8, 1.0)),
             transforms.RandomHorizontalFlip(),
             transforms.ColorJitter(0.2, 0.2, 0.2, 0.05),
             transforms.RandomRotation(10),
         ]
     elif args.augment == "basic":
         aug = [
-            transforms.Resize((args.img_size, args.img_size)),
             transforms.RandomHorizontalFlip(),
         ]
     else:  # none
-        aug = [transforms.Resize((args.img_size, args.img_size))]
+        aug = []
 
     train_tf = transforms.Compose(aug + [transforms.ToTensor(), norm])
     eval_tf = transforms.Compose([
-        transforms.Resize((args.img_size, args.img_size)),
         transforms.ToTensor(),
         norm,
     ])
 
     # only the TRAINING dataset carries the aux targets: the aux head is a
     # training-time regulariser, and keeping val main-only means the logged
-    # val loss / early stopping stay comparable to runs without --aux.
+    # val loss logging stays comparable to runs without --aux.
     train_ds = FFHQQualityDataset(train_df, args.root, args.target, train_tf, lo, hi,
                                   aux_cols=aux_cols, aux_lo=aux_lo, aux_hi=aux_hi)
     val_ds = FFHQQualityDataset(val_df, args.root, args.target, eval_tf, lo, hi)
@@ -735,12 +726,9 @@ def main():
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.5, patience=3)
 
     # ---- training loop ----------------------------------------------------- #
-    # Early stopping still tracks val MSE (the smoother of the two metrics
-    # epoch-to-epoch) to decide when to stop -- but the checkpoint saved to
-    # disk is always the LAST epoch actually run, not the best-val-MSE epoch:
-    # simpler, more defensible model selection (Spencer's request).
+    # Checkpoint saved to disk is always the LAST epoch actually run, not the
+    # best-val-MSE epoch: simpler, more defensible model selection.
     best_val_mse = float("inf")
-    epochs_since_best = 0
     log_rows = []
     for epoch in range(1, args.epochs + 1):
         t0 = time.time()
@@ -769,14 +757,6 @@ def main():
 
         if va_mse < best_val_mse - 1e-9:
             best_val_mse = va_mse
-            epochs_since_best = 0
-        else:
-            epochs_since_best += 1
-            if args.patience and epochs_since_best >= args.patience:
-                print(f"  -> early stop: no val-MSE gain for {args.patience} epochs "
-                      f"(best {best_val_mse:.5f}). Stopping at epoch {epoch}/{args.epochs} requested.",
-                      flush=True)
-                break
 
     state = model.module.state_dict() if hasattr(model, "module") else model.state_dict()
     torch.save({"model_state": state, "arch": args.arch, "target": args.target,
@@ -793,8 +773,8 @@ def main():
 
     # ---- training-set plot + overfitting diagnostics ----------------------- #
     if args.curve:
-        plot_curves(log_rows, args.curve, requested_epochs=args.epochs, patience=args.patience)
-    diagnose_overfitting(log_rows, span, requested_epochs=args.epochs, patience=args.patience)
+        plot_curves(log_rows, args.curve)
+    diagnose_overfitting(log_rows, span)
 
 
 if __name__ == "__main__":

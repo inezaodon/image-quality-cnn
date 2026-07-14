@@ -156,7 +156,7 @@ def main():
     ckpt = torch.load(args.model, map_location=device, weights_only=False)
     arch = ckpt.get("arch", "simple")
     target_col = ckpt.get("target", "UnifiedQualityScore.native")
-    img_size = ckpt.get("img_size", 224)
+    img_size = ckpt.get("img_size", 256)
     # scaling: new checkpoints carry the train-set (lo, hi); old ones used /100.
     lo = ckpt.get("target_lo", 0.0)
     hi = ckpt.get("target_hi", 100.0)
@@ -195,8 +195,7 @@ def main():
         norm = transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
     else:
         norm = transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])
-    tf = transforms.Compose([transforms.Resize((img_size, img_size)),
-                             transforms.ToTensor(), norm])
+    tf = transforms.Compose([transforms.ToTensor(), norm])
 
     model = build_model(arch, head_drop=ckpt.get("head_drop"),
                         head_act=ckpt.get("head_act", "sigmoid"),

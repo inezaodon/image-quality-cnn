@@ -22,7 +22,8 @@ WHAT ELSE IS IN THE CHECKPOINT (all plain Python values, not model code)
 -------------------------------------------------------------------------
     ckpt["arch"]       -> "resnet_small" (confirms which architecture to use)
     ckpt["target"]      -> "UnifiedQualityScore.native" (the OFIQ column it predicts)
-    ckpt["img_size"]    -> 224 (resize input images to this before feeding them in)
+    ckpt["img_size"]    -> 256 (the native FFHQ resolution; images are fed in
+                           at 256x256 with no downscaling)
     ckpt["epoch"]       -> the final epoch trained (the checkpoint is always saved
                            from the last epoch actually run, not from whichever epoch
                            had the lowest validation MSE -- see train_quality.py's
@@ -56,7 +57,6 @@ RUNNING INFERENCE ON A NEW IMAGE
     from torchvision import transforms
 
     tf = transforms.Compose([
-        transforms.Resize((ckpt["img_size"], ckpt["img_size"])),
         transforms.ToTensor(),
         transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5]),
     ])
@@ -132,15 +132,15 @@ class SmallResNet(nn.Module):
         super().__init__()
         w0, w1, w2, w3 = widths
         self.stem = nn.Sequential(
-            nn.Conv2d(3, w0, 3, stride=2, padding=1, bias=False),  # 224 -> 112
+            nn.Conv2d(3, w0, 3, stride=2, padding=1, bias=False),  # 256 -> 128
             nn.BatchNorm2d(w0),
             nn.ReLU(inplace=True),
-            nn.MaxPool2d(2),  # 112 -> 56
+            nn.MaxPool2d(2),  # 128 -> 64
         )
-        self.layer1 = BasicBlock(w0, w0, stride=1, drop=drop)  # 56
-        self.layer2 = BasicBlock(w0, w1, stride=2, drop=drop)  # 56 -> 28
-        self.layer3 = BasicBlock(w1, w2, stride=2, drop=drop)  # 28 -> 14
-        self.layer4 = BasicBlock(w2, w3, stride=2, drop=drop)  # 14 -> 7
+        self.layer1 = BasicBlock(w0, w0, stride=1, drop=drop)  # 64
+        self.layer2 = BasicBlock(w0, w1, stride=2, drop=drop)  # 64 -> 32
+        self.layer3 = BasicBlock(w1, w2, stride=2, drop=drop)  # 32 -> 16
+        self.layer4 = BasicBlock(w2, w3, stride=2, drop=drop)  # 16 -> 8
         self.pool = nn.AdaptiveAvgPool2d(1)
         self.head = nn.Sequential(
             nn.Flatten(),
