@@ -2,5 +2,7 @@ streamlit>=1.32
 torch>=2.0
 torchvision>=0.15
 pillow>=10.0
-opencv-python-headless>=4.8
 numpy>=1.24
+# Optional: improves face crops when the OpenCV binary loads correctly.
+# The app still works if CascadeClassifier is missing (Streamlit Cloud stub).
+opencv-python-headless>=4.8,<4.12

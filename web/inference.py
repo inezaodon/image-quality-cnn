@@ -8,10 +8,9 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-import cv2
 import numpy as np
 import torch
-from PIL import Image
+from PIL import Image, ImageOps
 from torchvision import transforms
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -20,6 +19,7 @@ sys.path.insert(0, str(ROOT))
 from model_architecture import SmallResNet  # noqa: E402
 
 MODEL_PATH = ROOT / "best_model_full.pt"
+CASCADE_PATH = Path(__file__).resolve().parent / "data" / "haarcascade_frontalface_default.xml"
 
 # Empirical FFHQ label range from the project dataset (REPORT.md §6).
 SCORE_LO = 11.2
@@ -94,59 +94,129 @@ def _percentile(score: float, lo: float, hi: float) -> float:
     return max(0.0, min(100.0, (score - lo) / span * 100.0))
 
 
-def _center_square_crop(img: Image.Image) -> Image.Image:
-    w, h = img.size
-    side = min(w, h)
-    left = (w - side) // 2
-    top = (h - side) // 2
-    return img.crop((left, top, left + side, top + side))
-
-
-def _face_square_crop(img: Image.Image) -> tuple[Image.Image, str, str]:
-    """Crop a face-centered square similar to FFHQ training images.
-
-    The model was trained only on tightly aligned FFHQ face crops. Full-body
-    or scenic photos with a small face score very low unless we crop first.
-    """
-    rgb = np.array(img.convert("RGB"))
-    gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
-    cascade = cv2.CascadeClassifier(
-        str(Path(cv2.data.haarcascades) / "haarcascade_frontalface_default.xml")
-    )
-    faces = cascade.detectMultiScale(
-        gray, scaleFactor=1.1, minNeighbors=5, minSize=(48, 48)
-    )
-
-    if len(faces) == 0:
-        crop = _center_square_crop(img)
-        return (
-            crop,
-            "center_square",
-            "No face detected — used a center square crop. Scores are unreliable if "
-            "the face is off-center or small in the frame. Prefer a close-up face photo.",
-        )
-
-    # Largest face by area
-    x, y, w, h = max(faces, key=lambda f: f[2] * f[3])
-    cx, cy = x + w / 2, y + h / 2
-    side = max(w, h) * (1.0 + 2.0 * FACE_MARGIN)
+def _square_crop_around(img: Image.Image, cx: float, cy: float, side: float) -> Image.Image:
     img_w, img_h = img.size
-    side = min(side, img_w, img_h)
-
+    side = min(float(side), float(img_w), float(img_h))
     left = int(round(cx - side / 2))
     top = int(round(cy - side / 2))
     left = max(0, min(left, img_w - int(side)))
     top = max(0, min(top, img_h - int(side)))
-    right = left + int(side)
-    bottom = top + int(side)
+    return img.crop((left, top, left + int(side), top + int(side)))
 
-    crop = img.crop((left, top, right, bottom))
-    n = len(faces)
-    note = (
-        f"Detected {n} face{'s' if n != 1 else ''}; scored the largest face after an "
-        "FFHQ-style square crop. The model only saw tightly cropped faces during training."
+
+def _center_square_crop(img: Image.Image, upper_bias: float = 0.0) -> Image.Image:
+    w, h = img.size
+    side = min(w, h)
+    left = (w - side) // 2
+    # upper_bias > 0 shifts the crop toward the top (typical portrait faces)
+    top = int((h - side) * max(0.0, min(1.0, upper_bias)))
+    top = max(0, min(top, h - side))
+    return img.crop((left, top, left + side, top + side))
+
+
+def _haar_faces(gray: np.ndarray) -> list[tuple[int, int, int, int]]:
+    """Return face boxes via OpenCV Haar, or [] if OpenCV is broken/unavailable.
+
+    Streamlit Cloud sometimes ships a stub ``cv2`` without CascadeClassifier.
+    We never raise from here — callers fall back to other crop strategies.
+    """
+    try:
+        import cv2  # local import so a broken cv2 can't break module import
+    except Exception:
+        return []
+
+    classifier_cls = getattr(cv2, "CascadeClassifier", None)
+    if classifier_cls is None:
+        return []
+
+    cascade_file = CASCADE_PATH
+    if not cascade_file.exists():
+        data_dir = getattr(getattr(cv2, "data", None), "haarcascades", None)
+        if data_dir:
+            cascade_file = Path(data_dir) / "haarcascade_frontalface_default.xml"
+    if not cascade_file.exists():
+        return []
+
+    try:
+        cascade = classifier_cls(str(cascade_file))
+        if cascade.empty() if hasattr(cascade, "empty") else False:
+            return []
+        faces = cascade.detectMultiScale(
+            gray, scaleFactor=1.1, minNeighbors=5, minSize=(48, 48)
+        )
+    except Exception:
+        return []
+
+    return [(int(x), int(y), int(w), int(h)) for (x, y, w, h) in faces]
+
+
+def _skin_face_box(rgb: np.ndarray) -> tuple[int, int, int, int] | None:
+    """Approximate a face box from skin-colored pixels (no OpenCV required)."""
+    r = rgb[:, :, 0].astype(np.int16)
+    g = rgb[:, :, 1].astype(np.int16)
+    b = rgb[:, :, 2].astype(np.int16)
+    # Classic RGB skin heuristic
+    skin = (
+        (r > 95) & (g > 40) & (b > 20)
+        & ((np.maximum(np.maximum(r, g), b) - np.minimum(np.minimum(r, g), b)) > 15)
+        & (np.abs(r - g) > 15) & (r > g) & (r > b)
     )
-    return crop, "face_detected", note
+    ys, xs = np.where(skin)
+    if len(xs) < max(200, rgb.shape[0] * rgb.shape[1] * 0.005):
+        return None
+
+    # Use central mass of skin pixels, ignore sparse outliers via percentiles
+    x0, x1 = np.percentile(xs, [8, 92]).astype(int)
+    y0, y1 = np.percentile(ys, [5, 90]).astype(int)
+    w = max(1, x1 - x0)
+    h = max(1, y1 - y0)
+    # Reject if the "face" is basically the whole image or tiny
+    area = w * h
+    img_area = rgb.shape[0] * rgb.shape[1]
+    if area < 0.02 * img_area or area > 0.85 * img_area:
+        return None
+    return int(x0), int(y0), int(w), int(h)
+
+
+def _face_square_crop(img: Image.Image) -> tuple[Image.Image, str, str]:
+    """Crop a face-centered square similar to FFHQ training images."""
+    rgb = np.array(img.convert("RGB"))
+    # Luma for Haar without requiring cv2.cvtColor
+    gray = (0.299 * rgb[:, :, 0] + 0.587 * rgb[:, :, 1] + 0.114 * rgb[:, :, 2]).astype(np.uint8)
+
+    faces = _haar_faces(gray)
+    if faces:
+        x, y, w, h = max(faces, key=lambda f: f[2] * f[3])
+        cx, cy = x + w / 2, y + h / 2
+        side = max(w, h) * (1.0 + 2.0 * FACE_MARGIN)
+        crop = _square_crop_around(img, cx, cy, side)
+        n = len(faces)
+        note = (
+            f"Detected {n} face{'s' if n != 1 else ''}; scored the largest face after an "
+            "FFHQ-style square crop. The model only saw tightly cropped faces during training."
+        )
+        return crop, "face_detected", note
+
+    skin = _skin_face_box(rgb)
+    if skin is not None:
+        x, y, w, h = skin
+        cx, cy = x + w / 2, y + h / 2
+        side = max(w, h) * (1.0 + 2.0 * FACE_MARGIN)
+        crop = _square_crop_around(img, cx, cy, side)
+        return (
+            crop,
+            "skin_estimate",
+            "OpenCV face detector unavailable — used a skin-tone estimate to crop. "
+            "Prefer a close-up face photo for best results.",
+        )
+
+    crop = _center_square_crop(img, upper_bias=0.22)
+    return (
+        crop,
+        "center_square",
+        "No face detected — used an upper-biased center crop. Scores are unreliable if "
+        "the face is off-center or small in the frame. Prefer a close-up face photo.",
+    )
 
 
 def _pil_to_b64_jpeg(img: Image.Image, size: int = 256) -> str:
@@ -177,8 +247,6 @@ class QualityScorer:
         self.model.load_state_dict(ckpt["model_state"])
         self.model.eval()
 
-        # Match evaluate.py: ToTensor + Normalize. Resize after face crop so
-        # arbitrary phone/web photos become 256×256 FFHQ-like inputs.
         self.transform = transforms.Compose([
             transforms.Resize((256, 256)),
             transforms.ToTensor(),
@@ -187,10 +255,7 @@ class QualityScorer:
 
     def score_image_bytes(self, data: bytes) -> ScoreResult:
         img = Image.open(io.BytesIO(data)).convert("RGB")
-        # EXIF orientation (phone photos often look upright in viewers but
-        # arrive rotated to the model without this).
         try:
-            from PIL import ImageOps
             img = ImageOps.exif_transpose(img)
         except Exception:
             pass
