@@ -12,7 +12,40 @@ from PIL import Image
 from web.inference import QualityScorer
 
 GITHUB = "https://github.com/inezaodon/image-quality-cnn"
+# Raw URLs serve the actual file bytes (GitHub /blob pages do not render PDFs).
+RAW = "https://raw.githubusercontent.com/inezaodon/image-quality-cnn/main"
 ROOT = Path(__file__).resolve().parent
+
+REPORT_FILES = {
+    "project_md": ROOT / "REPORT.md",
+    "tech_pdf": ROOT / "Technical Reports" / "tech_report.pdf",
+    "fixes_pdf": ROOT / "Technical Reports" / "fixes" / "fixes.pdf",
+    "fixes_md": ROOT / "Technical Reports" / "fixes" / "FIXES.md",
+}
+
+
+def _pdf_viewer_url(raw_url: str) -> str:
+    """Open a PDF in Mozilla's viewer so it actually displays in-browser."""
+    from urllib.parse import quote
+
+    return (
+        "https://mozilla.github.io/pdf.js/web/viewer.html?file="
+        + quote(raw_url, safe="")
+    )
+
+
+def _download_button(label: str, path: Path, mime: str, key: str) -> None:
+    if not path.exists():
+        st.caption(f"Missing file: `{path.name}`")
+        return
+    st.download_button(
+        label=label,
+        data=path.read_bytes(),
+        file_name=path.name,
+        mime=mime,
+        key=key,
+        use_container_width=True,
+    )
 
 st.set_page_config(
     page_title="Face Image Quality Scorer",
@@ -388,6 +421,9 @@ def main() -> None:
                 unsafe_allow_html=True,
             )
 
+    tech_raw = f"{RAW}/Technical%20Reports/tech_report.pdf"
+    fixes_raw = f"{RAW}/Technical%20Reports/fixes/fixes.pdf"
+
     st.markdown(
         f"""
         <div class="fq-card">
@@ -416,31 +452,51 @@ def main() -> None:
 
         <div class="fq-card">
           <h2>Technical reports &amp; documentation</h2>
-          <p class="fq-muted">Full methodology, evaluation metrics, and known limitations:</p>
-          <div class="fq-reports">
-            <a class="fq-report" href="{GITHUB}/blob/main/REPORT.md" target="_blank" rel="noopener">
-              <span class="fq-report-type">Markdown</span>
-              <strong>Project Report</strong>
-              <span class="desc">REPORT.md — dataset, architecture, training results</span>
-            </a>
-            <a class="fq-report" href="{GITHUB}/blob/main/Technical%20Reports/tech_report.pdf" target="_blank" rel="noopener">
-              <span class="fq-report-type">PDF</span>
-              <strong>Technical Report</strong>
-              <span class="desc">Academic write-up with figures and methodology</span>
-            </a>
-            <a class="fq-report" href="{GITHUB}/blob/main/Technical%20Reports/fixes/fixes.pdf" target="_blank" rel="noopener">
-              <span class="fq-report-type">PDF</span>
-              <strong>Problems &amp; Fixes</strong>
-              <span class="desc">Known issues and how they were addressed</span>
-            </a>
-            <a class="fq-report" href="{GITHUB}" target="_blank" rel="noopener">
-              <span class="fq-report-type">GitHub</span>
-              <strong>Source code</strong>
-              <span class="desc">Training code, weights, and evaluation scripts</span>
-            </a>
-          </div>
+          <p class="fq-muted">
+            PDFs are served from this app (and opened via a PDF viewer). GitHub’s file
+            pages do not display PDFs, so we no longer link those for documents.
+          </p>
         </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
+    r1, r2, r3, r4 = st.columns(4)
+    with r1:
+        st.markdown(
+            '<span class="fq-report-type">Markdown</span><br><strong>Project Report</strong>',
+            unsafe_allow_html=True,
+        )
+        st.caption("REPORT.md — dataset, architecture, results")
+        _download_button("Download REPORT.md", REPORT_FILES["project_md"], "text/markdown", "dl_report_md")
+        st.link_button("View on GitHub", f"{GITHUB}/blob/main/REPORT.md", use_container_width=True)
+    with r2:
+        st.markdown(
+            '<span class="fq-report-type">PDF</span><br><strong>Technical Report</strong>',
+            unsafe_allow_html=True,
+        )
+        st.caption("Full write-up with figures and methodology")
+        _download_button("Download PDF", REPORT_FILES["tech_pdf"], "application/pdf", "dl_tech_pdf")
+        st.link_button("Open PDF in viewer", _pdf_viewer_url(tech_raw), use_container_width=True)
+    with r3:
+        st.markdown(
+            '<span class="fq-report-type">PDF</span><br><strong>Problems &amp; Fixes</strong>',
+            unsafe_allow_html=True,
+        )
+        st.caption("Known issues and how they were addressed")
+        _download_button("Download PDF", REPORT_FILES["fixes_pdf"], "application/pdf", "dl_fixes_pdf")
+        st.link_button("Open PDF in viewer", _pdf_viewer_url(fixes_raw), use_container_width=True)
+    with r4:
+        st.markdown(
+            '<span class="fq-report-type">GitHub</span><br><strong>Source code</strong>',
+            unsafe_allow_html=True,
+        )
+        st.caption("Training code, weights, and evaluation")
+        st.link_button("Open repository", GITHUB, use_container_width=True)
+        _download_button("Download FIXES.md", REPORT_FILES["fixes_md"], "text/markdown", "dl_fixes_md")
+
+    st.markdown(
+        f"""
         <p class="fq-footer">
           Checkpoint: <code>best_model_full.pt</code> (SmallResNet, epoch {scorer.epoch})
           · Trained on <code>UnifiedQualityScore.native</code>
